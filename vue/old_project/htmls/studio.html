@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+
+<head>
+  <meta charset="UTF-8">
+  <title>思维导图编辑器</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      /* 禁止页面滚动条 */
+      overflow: hidden;
+      background-color: #f3f3f5;
+    }
+
+    .topbar {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      height: 48px;
+      background: #fff;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      box-shadow: 0 2px 10px #0001;
+      z-index: 3000;
+      padding: 0 12px;
+    }
+
+    .topbar-divider {
+      margin: 0 6px;
+      width: 1px;
+      height: 36px;
+      color: #eaeaf0;
+      /* 文字内容居中 */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .topbar-btn {
+      font-size: 28px;
+      cursor: pointer;
+      user-select: none;
+      color: #333;
+    }
+
+    .topbar-leave,
+    .topbar-cloud,
+    .topbar-download {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      /* 关键：水平居中 */
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .topbar-leave:hover,
+    .topbar-cloud:hover,
+    .topbar-download:hover {
+      background-color: #f0f0f0;
+      border-radius: 8px;
+    }
+
+    .topbar svg {
+      width: 24px;
+      height: 24px;
+      stroke: #434345;
+      stroke-width: 2.4;
+      fill: none;
+      color: #1f1f20;
+      display: block;
+    }
+
+    #sidebar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 60px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      z-index: 10;
+    }
+
+    #contextMenu {
+      display: none;
+      position: absolute;
+      z-index: 1000;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      width: 120px;
+    }
+
+    #menuDeleteNode {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0 8px;
+      height: 32px;
+      cursor: pointer;
+    }
+
+    #DeleteNode {
+      color: red;
+      font-size: 14px;
+      text-align: left;
+      flex: 1;
+    }
+
+    #DeleteNode-key {
+      color: #888;
+      font-size: 12px;
+      text-align: right;
+      flex-shrink: 0;
+      margin-left: 10px;
+    }
+
+    #menuEditNode {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0 8px;
+      height: 32px;
+      cursor: pointer;
+    }
+
+    #EditNode {
+      color: #222;
+      font-size: 14px;
+      text-align: left;
+      flex: 1;
+    }
+
+    #EditNode-key {
+      color: #888;
+      font-size: 12px;
+      text-align: right;
+      flex-shrink: 0;
+      margin-left: 10px;
+    }
+
+    #menuEditNode:hover,
+    #menuDeleteNode:hover {
+      background: #eeeff0;
+      border-radius: 5px;
+    }
+
+    #editPanel {
+      display: none;
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #fff;
+      z-index: 2000;
+      box-shadow: 0 0 16px #0002;
+      padding: 20px;
+      transform: translateX(100vw);
+      transition: transform 0.3s cubic-bezier(.4, 0, .2, 1);
+    }
+
+    #editPanel.show {
+      transform: translateX(0);
+    }
+
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+    }
+
+    svg {
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- 左上方工具栏 -->
+  <div class="topbar">
+    <!-- 返回按钮 -->
+    <div class="topbar-leave">
+      <svg role="img" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+        aria-labelledby="chevronLeftIconTitle">
+        <title id="chevronLeftIconTitle">Chevron Left</title>
+        <polyline points="14 18 8 12 14 6 14 6"></polyline>
+      </svg>
+    </div>
+    <!-- 分割线 -->
+    <div class="topbar-divider">|</div>
+    <!-- 云朵SVG，带右下角圆圈 -->
+    <div class="topbar-cloud">
+      <svg role="img" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+        aria-labelledby="cloudIconTitle">
+        <title id="cloudIconTitle">当前进度已保存</title>
+        <path
+          d="M6.5,18 C4.01471863,18 2,15.9852814 2,13.5 C2,11.0147186 4.01471863,9 6.5,9 C6.9194849,9 7.3255638,9.05739789 7.71081142,9.16476838 C8.72277,7.28089089 10.711801,6 13,6 C15.9817502,6 18.4554927,8.17503894 18.9211951,11.0250841 C20.6555928,11.2331085 22,12.7095527 22,14.5 C22,16.4329966 20.4329966,18 18.5,18 L6.5,18 Z">
+        </path>
+        <circle cx="20" cy="18.5" r="5" fill="#4CAF50" stroke="#FFFFFF" stroke-width="2"></circle>
+      </svg>
+    </div>
+    <!-- 分割线 -->
+    <!-- 下载 -->
+    <div class="topbar-divider">|</div>
+    <div class="topbar-download">
+      <svg role="img" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+        aria-labelledby="downloadIconTitle">
+        <title id="downloadIconTitle">下载</title>
+        <path d="M12,3 L12,16"></path>
+        <polyline points="7 12 12 17 17 12"></polyline>
+        <path d="M20,21 L4,21"></path>
+      </svg>
+    </div>
+  </div>
+  <!-- 该元素用于定义节点模板，实际节点会动态创建 -->
+  <svg style="display:none">
+    <g id="node-template">
+      <rect x="-40" y="-25" width="80" height="50" rx="15" ry="15" fill="#fff" stroke="#000" stroke-width="2"></rect>
+      <text x="0" y="-5" text-anchor="middle">未命名节点</text>
+    </g>
+  </svg>
+  <!-- 实现自定义右键菜单栏 -->
+  <div id="contextMenu">
+    <div id="menuEditNode">
+      <div id="EditNode">编辑</div>
+      <div id="EditNode-key">Enter</div>
+    </div>
+    <div class="menu-divider"></div>
+    <div id="menuDeleteNode">
+      <div id="DeleteNode">删除</div>
+      <div id="DeleteNode-key">Del</div>
+    </div>
+  </div>
+  <!-- 编辑面板 -->
+  <div id="editPanel">
+    <h3>编辑节点</h3>
+    <div style="margin-bottom:10px;">
+      <label>节点名称：</label><br>
+      <input id="editName" style="width:95%;font-size:16px;" />
+    </div>
+    <div style="margin-bottom:10px;">
+      <label>内容：</label><br>
+      <div id="editContent" contenteditable="true"
+        style="width:95%;height:200px;border:1px solid #ccc;padding:5px;overflow:auto;"></div>
+    </div>
+    <button id="saveEditBtn">保存</button>
+    <button id="closeEditBtn">关闭</button>
+  </div>
+  <div id="sidebar">
+    <img id="addNodeImg" src="../assets/studio-addNodeImg.png" draggable="true" style="width:40px;height:40px;">
+    <img id="addEdgeImg" src="../assets/studio-addLineImg.png" draggable="true" style="width:40px;height:40px;">
+  </div>
+  <div id="canvas-container">
+    <svg id="mindmap-canvas">
+      <!-- 节点和连线会动态插入 -->
+    </svg>
+  </div>
+  <script>
+    // 节点数据结构
+    let nodes = [];
+    let nodeId = 1;
+    let selectedNodeId = null;
+    let editingNodeId = null;
+
+    const svg = document.getElementById('mindmap-canvas');
+
+    // 拖拽相关全局变量
+    let draggingNode = null;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+
+
+    // 拖拽新节点相关
+    let isDraggingNewNode = false;
+    document.getElementById('addNodeImg').addEventListener('dragstart', function (e) {
+      isDraggingNewNode = true;
+    });
+    svg.addEventListener('dragover', function (e) {
+      e.preventDefault();
+    });
+    svg.addEventListener('drop', function (e) {
+      if (isDraggingNewNode) {
+        const svgRect = svg.getBoundingClientRect();
+        const x = e.clientX - svgRect.left;
+        const y = e.clientY - svgRect.top;
+        nodes.push({ id: nodeId++, name: '新节点', content: '', x, y });
+        render();
+        isDraggingNewNode = false;
+      }
+    });
+
+    // 渲染所有节点
+    function render() {
+      svg.innerHTML = '';
+      nodes.forEach(node => {
+        const template = document.getElementById('node-template');
+        const g = template.cloneNode(true);
+        g.removeAttribute('id');
+        g.setAttribute('class', 'node' + (node.id === selectedNodeId ? ' selected' : ''));
+        g.setAttribute('data-id', node.id);
+        g.setAttribute('transform', `translate(${node.x},${node.y})`);
+        g.style.cursor = 'pointer';
+
+        // 设置节点名称
+        const text = g.querySelector('text');
+        text.textContent = node.name;
+        // 设置节点内容
+        const foDiv = g.querySelector('foreignObject > div');
+        if (foDiv) {
+          foDiv.innerHTML = node.content || '';
+        }
+
+        // 选中事件
+        g.onclick = function (e) {
+          e.stopPropagation();
+          selectedNodeId = node.id;
+          render();
+        };
+
+        // 拖拽事件（只在g上绑定mousedown）
+        g.onmousedown = function (e) {
+          e.stopPropagation();
+          draggingNode = node;
+          // 计算鼠标点到节点中心的偏移
+          // 注意：SVG坐标需用clientX/clientY减去svg的边界
+          const svgRect = svg.getBoundingClientRect();
+          dragOffsetX = e.clientX - svgRect.left - node.x;
+          dragOffsetY = e.clientY - svgRect.top - node.y;
+          svg.style.cursor = 'grabbing';
+        };
+
+        // 右键菜单功能
+        const contextMenu = document.getElementById('contextMenu');
+        const menuDeleteNode = document.getElementById('menuDeleteNode');
+        const menuEditNode = document.getElementById('menuEditNode');
+        g.oncontextmenu = function (e) {
+          e.preventDefault();
+          selectedNodeId = node.id;
+          render();
+          contextMenu.style.display = 'block';
+          contextMenu.style.left = e.clientX + 'px';
+          contextMenu.style.top = e.clientY + 'px';
+        };
+        // 删除
+        menuDeleteNode.onclick = function () {
+          if (selectedNodeId !== null) {
+            nodes = nodes.filter(n => n.id !== selectedNodeId);
+            selectedNodeId = null;
+            render();
+          }
+          contextMenu.style.display = 'none';
+        };
+        // 编辑
+        menuEditNode.onclick = function () {
+          if (selectedNodeId !== null) {
+            editingNodeId = selectedNodeId;
+            const node = nodes.find(n => n.id === editingNodeId);
+            document.getElementById('editName').value = node.name;
+            document.getElementById('editContent').innerHTML = node.content || '';
+            document.getElementById('editPanel').style.display = 'block';
+            const panel = document.getElementById('editPanel');
+            panel.style.display = 'block';
+            setTimeout(() => {
+              panel.classList.add('show');
+            }, 10); // 10ms足够让浏览器渲染出来，之后再执行动画
+          }
+          contextMenu.style.display = 'none';
+        };
+        document.addEventListener('click', function () {
+          contextMenu.style.display = 'none';
+        });
+
+        svg.appendChild(g);
+      });
+      // 编辑面板保存/关闭
+      document.getElementById('saveEditBtn').onclick = function () {
+        if (editingNodeId !== null) {
+          const node = nodes.find(n => n.id === editingNodeId);
+          node.name = document.getElementById('editName').value;
+          node.content = document.getElementById('editContent').innerHTML;
+          render();
+        }
+        document.getElementById('editPanel').classList.remove('show');
+        setTimeout(() => {
+          document.getElementById('editPanel').style.display = 'none';
+        }, 300); // 等动画结束后隐藏
+        editingNodeId = null;
+      };
+      document.getElementById('closeEditBtn').onclick = function () {
+        document.getElementById('editPanel').classList.remove('show');
+        setTimeout(() => {
+          document.getElementById('editPanel').style.display = 'none';
+        }, 300); // 等动画结束后隐藏
+        editingNodeId = null;
+      };
+      // 4. 画布空白处点击取消选中
+      svg.onclick = function () {
+        selectedNodeId = null;
+        render();
+      };
+    }
+
+    // 全局拖拽监听
+    svg.addEventListener('mousemove', function (e) {
+      if (draggingNode) {
+        const svgRect = svg.getBoundingClientRect();
+        draggingNode.x = e.clientX - svgRect.left - dragOffsetX;
+        draggingNode.y = e.clientY - svgRect.top - dragOffsetY;
+        render();
+      }
+    });
+    svg.addEventListener('mouseup', function (e) {
+      if (draggingNode) {
+        draggingNode = null;
+        svg.style.cursor = 'grab';
+      }
+    });
+    // 防止拖拽时鼠标移出svg导致拖拽卡住
+    document.addEventListener('mouseup', function (e) {
+      if (draggingNode) {
+        draggingNode = null;
+        svg.style.cursor = 'grab';
+      }
+    });
+
+    // 删除节点快捷键监听
+    document.addEventListener('keydown', function (e) {
+      // 检查是否按下了 Delete 键
+      if (e.key === 'Delete' && selectedNodeId !== null) {
+        nodes = nodes.filter(n => n.id !== selectedNodeId);
+        selectedNodeId = null;
+        render();
+      }
+    });
+    // 保存节点快捷键监听
+    document.addEventListener('keydown', function (e) {
+      // Ctrl+S 保存逻辑
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        // 这里调用远程API保存，具体内容后续补充
+        console.log('调用远程API保存（占位）');
+        return;
+      }
+    });
+    // 返回按钮点击事件
+    document.querySelector('.topbar-leave').onclick = function () {
+      window.location.href = 'create.html';
+    };
+    render();
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <link rel="stylesheet" href="../navbar/navbar.css">
+  <link rel="stylesheet" href="./login.css">
+</head>
+
+<body>
+  <!-- 导航栏容器 -->
+  <div id="navbar"></div>
+  <script>
+    // 加载导航栏
+    document.addEventListener('DOMContentLoaded', function () {
+      fetch('../navbar/navbar.html')
+        .then(response => response.text())
+        .then(html => {
+          document.getElementById('navbar').innerHTML = html;
+          // 动态加载navbar.js
+          var script = document.createElement('script');
+          script.src = '../navbar/navbar.js';
+          script.onload = function () {
+            // navbar.js 加载完成后执行初始化
+            initNavbarActive();
+          };
+          document.body.appendChild(script);
+        });
+    });
+
+  </script>
+</body>
+
+</html>

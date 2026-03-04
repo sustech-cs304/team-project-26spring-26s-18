@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: demo
+  data:
+    redis:
+      host: 39.107.193.66
+      port: 6379
+      password: rootroot
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: 1000ms
+  datasource:
+    url: jdbc:mysql://rm-bp1p72p7935yex8z1fo.mysql.rds.aliyuncs.com:3306/software_engineering
+    username: user
+    password: Gpz_1234567
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  #邮箱发送验证码
+  mail:
+    host: smtp.163.com
+    username: 17692267492@163.com
+    password: FPenjCLUPk5Rxy5Y
+    port: 465
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+          starttls:
+            enable: false
+      debug: false
+    protocol: smtps
+    default-encoding: UTF-8
+
+server:
+  port: 8075

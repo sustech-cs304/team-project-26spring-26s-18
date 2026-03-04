@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <style>
+    .container {
+      display: flex;
+      height: 100vh;
+    }
+
+    /* 侧边栏相关 */
+    .sidebar {
+      width: 300px;
+      background: #fbfbfb;
+      display: flex;
+      flex-direction: column;
+      padding: 10px 0;
+      /* 右侧添加一条黑线 */
+      border-right: 1px solid #e0e0e0;
+    }
+
+    .sidebar-item {
+      font-size: 16px;
+      padding: 12px 16px;
+      cursor: pointer;
+      /*每两个之间的间隔*/
+      margin-bottom: 8px;
+    }
+
+    .sidebar-item:hover {
+      background: #eeeff0;
+      border-radius: 15px;
+    }
+
+    .sidebar-item.active {
+      background: #eeeff0;
+      color: #000;
+      font-weight: bold;
+      border-radius: 15px;
+    }
+
+    /* 主内容区域 */
+    .main-content {
+      flex: 1;
+      padding: 24px;
+      background: #fff;
+    }
+
+    .content {
+      display: flex;
+      /* flex-wrap: wrap;用来实现填充内容过多时自动换行 */
+      flex-wrap: wrap;
+      gap: 24px;
+    }
+
+    /* 模板卡片 */
+    .option {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+
+    .option-card {
+      width: 172px;
+      height: 115px;
+      background: #8875f8;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 8px;
+      box-shadow: 0 2px 8px rgba(136, 117, 248, 0.08);
+      cursor: pointer;
+      transition: box-shadow 0.2s, transform 0.2s;
+    }
+
+    .option-card:hover {
+      box-shadow: 0 4px 16px rgba(136, 117, 248, 0.18);
+      transform: scale(1.06);
+    }
+
+
+    .option-text {
+      margin-top: 4px;
+      font-size: 14px;
+      color: #222;
+      text-align: center;
+    }
+
+    .option-empty-plus {
+      color: #fff;
+      font-size: 48px;
+      font-weight: 400;
+      line-height: 1;
+      user-select: none;
+    }
+
+    /* 示例模板卡片 */
+    .option-example-image {
+      width: 172px;
+      height: 115px;
+      border-radius: 12px;
+      object-fit: cover;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- 导航栏容器 -->
+  <div id="navbar"></div>
+  <div class="container">
+    <div class="sidebar">
+      <div class="sidebar-item active" data-content="content1">创建路线图</div>
+      <div class="sidebar-item" data-content="content2">全部文件</div>
+    </div>
+    <div class="main-content">
+      <div class="content" id="content1">
+        <!-- 空模板卡片 -->
+        <div class="option">
+          <div class="option-card">
+            <div class="option-empty-plus">+</div>
+          </div>
+          <div class="option-text">新建空路线图</div>
+        </div>
+        <!-- 示例模块卡片 -->
+        <div class="option">
+          <div class="option-card">
+            <img src="../assets/create-example.png" alt="Sample Roadmap" class="option-example-image">
+          </div>
+          <div class="option-text">使用示例路线图</div>
+        </div>
+      </div>
+      <div class="content" id="content2" style="display:none;">
+        这里是选项2的内容
+      </div>
+    </div>
+  </div>
+  <script>
+    // 加载导航栏
+    document.addEventListener('DOMContentLoaded', function () {
+      fetch('../navbar/navbar.html')
+        .then(response => response.text())
+        .then(html => {
+          document.getElementById('navbar').innerHTML = html;
+          // 动态加载navbar.js
+          var script = document.createElement('script');
+          script.src = '../navbar/navbar.js';
+          script.onload = function () {
+            // navbar.js 加载完成后执行初始化
+            initNavbarActive();
+          };
+          document.body.appendChild(script);
+        });
+    });
+
+    // 侧边栏点击事件,切换内容
+    document.querySelectorAll('.sidebar-item').forEach(item => {
+      item.addEventListener('click', function () {
+        const contentId = this.getAttribute('data-content');
+        document.querySelectorAll('.content').forEach(content => {
+          content.style.display = 'none';
+        });
+        document.getElementById(contentId).style.display = 'block';
+      });
+    });
+    // 侧边栏激活状态切换
+    document.querySelectorAll('.sidebar-item').forEach(item => {
+      item.addEventListener('click', function () {
+        document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+        this.classList.add('active');
+      });
+    });
+    document.querySelector('.option-card .option-empty-plus').parentElement.onclick = function () {
+      window.location.href = 'studio.html';
+    };
+  </script>
+</body>
+
+</html>
