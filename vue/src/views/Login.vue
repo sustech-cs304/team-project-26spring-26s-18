@@ -79,6 +79,7 @@ function changeForm() {
     isAnimating.value = false
   }, 1500)
 }
+// 登录
 async function onLogin() {
   if (!loginEmail.value || !loginPassword.value) {
     ElMessage.error('请输入邮箱和密码')
