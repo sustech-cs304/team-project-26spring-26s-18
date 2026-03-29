@@ -70,6 +70,7 @@ function onAvatarChange(e) {
       })
       const data = await res.json()
       if (data && data.code === 1 && data.data) {
+        console.log(data.data)
         userStore.userAvatarURL = data.data
         userStore.setUser({
           id: userStore.id,
@@ -79,6 +80,8 @@ function onAvatarChange(e) {
           avatarURL: data.data,
           token: userStore.token
         })
+      } else {
+        console.log(data)
       }
     } catch { }
   }

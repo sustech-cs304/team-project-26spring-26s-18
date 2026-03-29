@@ -1,1 +1,2 @@
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/py413vYq)
+后端项目的readme文件中有后端配置、启动方案
+前端项目有一个vue框架自带的readme文件介绍如何启动项目，但需要先在自己电脑上安装node.js并配置npm
