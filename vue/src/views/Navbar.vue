@@ -9,8 +9,8 @@
         <img src="@/assets/title.png" alt="Title" class="navbar-title-image" />
       </div>
       <div class="navbar-center">
-        <RouterLink to="/page1" class="nav-link navbar-create-center" :class="{ 'navbar-active': isActive('/page1') }"
-          @click="requireLogin">页面1</RouterLink>
+        <RouterLink to="/chat" class="nav-link navbar-create-center" :class="{ 'navbar-active': isActive('/chat') }"
+          @click="requireLogin">AI 聊天</RouterLink>
         <RouterLink to="/page2" class="nav-link" :class="{ 'navbar-active': isActive('/page2') }">页面2</RouterLink>
       </div>
       <div class="navbar-right">

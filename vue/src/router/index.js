@@ -7,6 +7,11 @@ const routes = [
     component: () => import('@/views/Login.vue'),
   },
   {
+    path: '/chat',
+    name: 'chat',
+    component: () => import('@/views/Chat.vue'),
+  },
+  {
     path: '/page1',
     name: 'page1',
     component: () => import('@/views/Page1.vue'),
@@ -23,7 +28,7 @@ const routes = [
   },
   {
     path: '/',
-    redirect: '/page1',
+    redirect: '/chat',
   },
 ]
 
