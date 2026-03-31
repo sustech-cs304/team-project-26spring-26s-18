@@ -33,3 +33,15 @@ class OSSUtil:
         auth = oss2.Auth(OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET)
         bucket = oss2.Bucket(auth, OSS_ENDPOINT, OSS_BUCKET_NAME)
         return bucket.sign_url('GET', file_name, expires)
+    @staticmethod
+    def download_to_base64(file_name: str) -> str:
+        """
+        从阿里云OSS拉取文件并转为base64字符串。
+        """
+        import base64
+        auth = oss2.Auth(OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET)
+        bucket = oss2.Bucket(auth, OSS_ENDPOINT, OSS_BUCKET_NAME)
+        result = bucket.get_object(file_name)
+        file_bytes = result.read()
+        base64_str = base64.b64encode(file_bytes).decode('utf-8')
+        return base64_str

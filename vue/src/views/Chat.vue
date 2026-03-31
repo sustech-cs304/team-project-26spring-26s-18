@@ -39,7 +39,23 @@
           :class="message.role === 'user' ? 'user-message' : 'ai-message'"
         >
           <div class="message-content">
-            <div class="message-text">{{ message.content }}</div>
+            <!-- 文本内容 -->
+            <div v-if="message.content_type === 'text'" class="message-text">{{ message.content }}</div>
+            <!-- 图片内容 -->
+            <div v-else-if="message.content_type === 'image'" class="message-image">
+              <img 
+                :src="message.content.replace(/[`]/g, '')" 
+                alt="图片"
+                class="message-image-img"
+                style="max-width: 100px; max-height: 100px; object-fit: contain; border-radius: 8px;"
+              />
+            </div>
+            <!-- PDF内容，仅显示文件名 -->
+            <div v-else-if="message.content_type === 'pdf'" class="message-text">
+              <span style="color: #1976d2; font-weight: bold;">{{ message.name || '无名PDF文件' }}</span>
+            </div>
+            <!-- 其他类型内容 -->
+            <div v-else class="message-text">{{ message.content }}</div>
           </div>
         </div>
         <div v-if="loading" class="loading-message">
@@ -50,14 +66,34 @@
       
       <!-- 输入框区域 -->
       <div class="chat-input-area">
-        <input 
-          type="text" 
-          v-model="inputMessage"
-          class="chat-input"
-          placeholder="输入消息..."
-          @keyup.enter="sendMessage"
-        />
+        <div class="input-container">
+          <input 
+            type="text" 
+            v-model="inputMessage"
+            class="chat-input"
+            placeholder="输入消息..."
+            @keyup.enter="sendMessage"
+          />
+          <input 
+            type="file" 
+            ref="fileInput"
+            multiple
+            class="file-input"
+            @change="handleFileChange"
+            style="display: none;"
+          />
+          <button class="file-btn" @click="triggerFileInput">
+            📎
+          </button>
+        </div>
         <button class="send-btn" @click="sendMessage">发送</button>
+      </div>
+      <!-- 文件列表 -->
+      <div v-if="selectedFiles.length > 0" class="file-list">
+        <div v-for="(file, index) in selectedFiles" :key="index" class="file-item">
+          <span>{{ file.name }}</span>
+          <button class="remove-file-btn" @click="removeFile(index)">×</button>
+        </div>
       </div>
     </div>
   </div>
@@ -75,6 +111,8 @@ const activeSessionId = ref(null)
 const inputMessage = ref('')
 const loading = ref(false)
 const chatContentRef = ref(null)
+const fileInput = ref(null)
+const selectedFiles = ref([])
 
 // 滚动到底部
 function scrollToBottom() {
@@ -122,6 +160,7 @@ async function fetchSessionContent(sessionId) {
     })
     if (response.ok) {
       const result = await response.json()
+      console.log('获取会话内容返回：', result)
       messages.value = result.data
       scrollToBottom()
     }
@@ -140,6 +179,45 @@ function clearSession() {
   // 清空当前会话状态，准备创建新会话
   activeSessionId.value = null
   messages.value = []
+  selectedFiles.value = []
+}
+
+// 触发文件选择
+function triggerFileInput() {
+  fileInput.value.click()
+}
+
+// 处理文件选择
+function handleFileChange(e) {
+  const files = e.target.files
+  if (files.length > 0) {
+    // 检查文件格式是否一致
+    const fileType = files[0].type
+    const allSameType = Array.from(files).every(file => file.type === fileType)
+    
+    if (!allSameType) {
+      alert('请上传同一格式的文件')
+      return
+    }
+    
+    // 添加文件到列表
+    selectedFiles.value = [...selectedFiles.value, ...Array.from(files)]
+  }
+}
+
+// 移除文件
+function removeFile(index) {
+  selectedFiles.value.splice(index, 1)
+}
+
+// 文件转base64
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result.split(',')[1]) // 移除data:image/...;base64,前缀
+    reader.onerror = error => reject(error)
+    reader.readAsDataURL(file)
+  })
 }
 
 // 选择会话
@@ -191,18 +269,38 @@ async function sendMessage() {
       }
     }
     
+    // 处理文件，转换为base64，并收集文件名
+    let filesBase64 = []
+    let fileTypes = []
+    let fileNames = []
+    if (selectedFiles.value.length > 0) {
+      filesBase64 = await Promise.all(selectedFiles.value.map(file => fileToBase64(file)))
+      fileTypes = selectedFiles.value.map(file => file.type)
+      fileNames = selectedFiles.value.map(file => file.name)
+    }
+    
     // 触发AI回复并获取完整对话
     loading.value = true
+    
+    // 构建请求数据，增加 file_names 字段
+    const requestData = {
+      session_id: activeSessionId.value,
+      content: messageContent,
+      files: filesBase64.length > 0 ? filesBase64 : null,
+      file_types: fileTypes.length > 0 ? fileTypes : null,
+      file_names: fileNames.length > 0 ? fileNames : null
+    }
+    
+    // 输出实际传输的内容
+    console.log('发送给后端的消息数据:', requestData)
+    
     const aiResponse = await fetch(`http://${ip}/session/aicontent`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'token': userStore.token
       },
-      body: JSON.stringify({
-        session_id: activeSessionId.value,
-        content: messageContent
-      })
+      body: JSON.stringify(requestData)
     })
     
     if (aiResponse.ok) {
@@ -213,6 +311,9 @@ async function sendMessage() {
         // 清空当前消息列表并添加新消息
         messages.value = [...messages.value, ...newMessages]
         scrollToBottom()
+        
+        // 清空文件列表
+        selectedFiles.value = []
       } else {
         console.log(aiResult)
         console.error('无效的API响应格式')
@@ -440,6 +541,35 @@ onMounted(() => {
   text-align: right;
 }
 
+/* 图片消息 */
+.message-image {
+  display: inline-block;
+  max-width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.message-image-img {
+  max-width: 300px;
+  max-height: 300px;
+  object-fit: contain;
+  border-radius: 8px;
+  transition: transform 0.2s;
+  cursor: pointer;
+}
+
+.message-image-img:hover {
+  transform: scale(1.02);
+}
+
+/* 响应式图片 */
+@media (max-width: 768px) {
+  .message-image-img {
+    max-width: 200px;
+    max-height: 200px;
+  }
+}
+
 .loading-message {
   align-self: flex-start;
   display: flex;
@@ -472,20 +602,47 @@ onMounted(() => {
   background-color: white;
   display: flex;
   gap: 12px;
+  align-items: flex-end;
+}
+
+.input-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  position: relative;
 }
 
 .chat-input {
   flex: 1;
-  padding: 12px 16px;
+  padding: 12px 40px 12px 16px;
   border: 1px solid #e0e0e0;
   border-radius: 24px;
   font-size: 14px;
   outline: none;
   transition: border-color 0.3s;
+  resize: none;
 }
 
 .chat-input:focus {
   border-color: #2196f3;
+}
+
+.file-btn {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 5px;
+  border-radius: 50%;
+  transition: background-color 0.2s;
+}
+
+.file-btn:hover {
+  background-color: #e0e0e0;
 }
 
 .send-btn {
@@ -498,6 +655,8 @@ onMounted(() => {
   font-size: 14px;
   font-weight: 500;
   transition: background-color 0.3s;
+  height: 44px;
+  align-self: center;
 }
 
 .send-btn:hover {
@@ -507,5 +666,41 @@ onMounted(() => {
 .send-btn:disabled {
   background-color: #bdbdbd;
   cursor: not-allowed;
+}
+
+/* 文件列表 */
+.file-list {
+  padding: 0 20px 20px;
+  background-color: white;
+  border-top: 1px solid #e0e0e0;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.file-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background-color: #e3f2fd;
+  border-radius: 16px;
+  font-size: 13px;
+}
+
+.remove-file-btn {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  color: #666;
+  padding: 0 5px;
+  border-radius: 50%;
+  transition: background-color 0.2s;
+}
+
+.remove-file-btn:hover {
+  background-color: #bbdefb;
+  color: #333;
 }
 </style>

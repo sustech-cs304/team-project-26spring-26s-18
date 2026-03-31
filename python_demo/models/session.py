@@ -14,6 +14,7 @@ class Session(Base):
 	updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
 
+
 class SessionContent(Base):
 	__tablename__ = "session_content"
 
@@ -21,5 +22,7 @@ class SessionContent(Base):
 	session_id: Mapped[int] = mapped_column(Integer, ForeignKey("session.id"), nullable=False)
 	role: Mapped[str] = mapped_column(String(50), nullable=False)
 	content: Mapped[str] = mapped_column(Text, nullable=False)
+	content_type: Mapped[str] = mapped_column(String(50), default="text")  # 新增字段，标记内容类型，如 text/image/pdf/markdown
+	name: Mapped[str | None] = mapped_column(String(255), nullable=True)  # 新增字段，文件名，文本类为null
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 	updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))

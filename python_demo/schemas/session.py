@@ -17,6 +17,8 @@ class SessionContent(BaseModel):
     session_id: int
     role: str
     content: str
+    content_type: str
+    name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

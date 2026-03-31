@@ -79,6 +79,7 @@ app.add_middleware(
 - mail_util 就是发送邮件的工具包
 - oss_util 就是将用户发送的图片上传到阿里云 OSS 并获取访问的 url 的工具包
 - ai_util 就是调用 ai 的工具
+- 剩下的内容以此类推
 
 ### 2.5 routers、crud、models
 这三个是主要的业务逻辑文件夹，每个文件夹中都会有一个名字相同文件，以 user.py 为例：

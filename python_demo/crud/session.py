@@ -29,8 +29,8 @@ async def update_session_title_by_id(db: AsyncSession, session_id: int, new_titl
     await db.commit()
 
 # SessionContent 相关的 CRUD 操作
-async def create_content(db: AsyncSession, session_id: int, role: str, content: str) -> SessionContent:
-    new_content = SessionContent(session_id=session_id, role=role, content=content)
+async def create_content(db: AsyncSession, session_id: int, role: str, content: str, content_type: str = "text", name: str = None) -> SessionContent:
+    new_content = SessionContent(session_id=session_id, role=role, content=content, content_type=content_type, name=name)
     db.add(new_content)
     await db.commit()
     await db.refresh(new_content)

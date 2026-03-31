@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException,Body
 from sqlalchemy.orm import Session as DBSession
-from typing import List
+from typing import List, Optional
 from schemas.session import Session as SessionSchema, SessionContent as SessionContentSchema
 from utils.Result import Result
 from schemas.session import Session as SessionSchema, SessionContent as SessionContentSchema
@@ -15,7 +15,7 @@ from crud.session import (
     get_last_n_content_by_session_id
 )
 from config.db_config import get_db
-from utils.ai_util import chat_with_ai
+from utils.ai_util import ai_chat
 
 router = APIRouter(prefix="/session", tags=["session"])
 
@@ -46,28 +46,23 @@ async def api_create_session(
 async def api_create_ai_content(
     session_id: int = Body(..., embed=True),
     content: str = Body(..., embed=True),
+    files: Optional[List[str]] = Body(None, embed=True),         # base64内容数组
+    file_types: Optional[List[str]] = Body(None, embed=True),    # 文件类型数组
+    file_names: Optional[List[str]] = Body(None, embed=True),    # 文件名数组
     db: DBSession = Depends(get_db)
 ):
-    # 1. 插入用户输入
-    user_msg = await create_content(db, session_id, "user", content)
-    # 2. 插入AI回复
-    # 2.1 查询历史记录（此处简单查询最近5条）
-    last_msgs = await get_last_n_content_by_session_id(db, session_id, 5)
-    # 包装为AI接口需要的格式
-    history_messages = [
-        {"role": msg.role, "content": msg.content}
-        for msg in last_msgs
-    ] if last_msgs else None
-    # 2.2 查询相关资料（此处暂不实现，传None）
-    related_messages = None
-    # 2.3 调用AI接口生成回复
-    ai_reply = chat_with_ai(content, history_messages=history_messages, related_messages=related_messages)
-    ai_msg = await create_content(db, session_id, "assistant", ai_reply)
-    # 3. 返回
+    # 统一由ai_chat处理消息存储和AI回复
+    msgs = await ai_chat(
+        db=db,
+        session_id=session_id,
+        content=content,
+        files=files,
+        file_types=file_types,
+        file_names=file_names
+    )
     from schemas.session import SessionContent as SessionContentSchema
     return Result.success([
-        SessionContentSchema.model_validate(user_msg),
-        SessionContentSchema.model_validate(ai_msg)
+        SessionContentSchema.model_validate(m) for m in msgs
     ])
 
 @router.delete("/content/{content_id}")
