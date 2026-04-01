@@ -3,7 +3,7 @@ import os
 import base64
 import uuid
 from utils.oss_util import OSSUtil
-from crud.session import create_content
+from crud.session import create_content, get_last_n_content_by_session_id
 import asyncio
 from functools import partial
 from utils.pdf_util import extract_pdf_text
@@ -27,10 +27,25 @@ async def ai_chat(
     """
     msg_content = []
     user_msgs = []
-    # 1. 插入用户文本消息
+
+    # 1. 查询历史消息（最近5条，按时间升序）
+    history_msgs = await get_last_n_content_by_session_id(db, session_id, n=5)
+    history_contents = []
+    for msg in history_msgs:
+        content_list = []
+        if msg.content_type == "text":
+            content_list.append({"type": "text", "text": msg.content})
+        elif msg.content_type == "image":
+            content_list.append({"type": "image_url", "image_url": {"url": msg.content}})
+        elif msg.content_type == "pdf":
+            content_list.append({"type": "text", "text": f"pdf不是连接，而是下面的内容: {msg.content}"})
+        elif msg.content_type == "markdown":
+            content_list.append({"type": "text", "text": f"md不是连接，而是下面的内容: {msg.content}"})
+        history_contents.append({"role": msg.role, "content": content_list})
+
+    # 2. 处理本次用户文本和文件
     user_msg = await create_content(db, session_id, "user", content, content_type="text", name=None)
     user_msgs.append(user_msg)
-    # 2. 处理图片，插入图片消息
     if files and file_types:
         for idx, (f, t) in enumerate(zip(files, file_types)):
             name = file_names[idx] if file_names and idx < len(file_names) else None
@@ -46,15 +61,29 @@ async def ai_chat(
                     "image_url": {"url": url}
                 })
             elif t == "application/pdf":
-                pdf_text = extract_pdf_text(f, max_len=10000)
+                pdf_text = extract_pdf_text(f, max_len=5000)
                 pdf_msg = await create_content(db, session_id, "user", pdf_text, content_type="pdf", name=name)
                 msg_content.append({
                     "type": "text",
                     "text": f"pdf不是连接，而是下面的内容: {pdf_text}"
                 })
                 user_msgs.append(pdf_msg)
-    # 3. 组装文本内容
+            elif t == "text/markdown":
+                md_text = base64.b64decode(f).decode("utf-8")
+                md_msg = await create_content(db, session_id, "user", md_text, content_type="markdown", name=name)
+                msg_content.append({
+                    "type": "text",
+                    "text": f"md不是连接，而是下面的内容: {md_text}"
+                })
+                user_msgs.append(md_msg)
     msg_content.append({"type": "text", "text": content})
+
+    # 3. 拼装最终 messages
+    messages = []
+    for h in history_contents:
+        messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": msg_content})
+
     # 4. 调用大模型
     loop = asyncio.get_event_loop()
     completion = await loop.run_in_executor(
@@ -62,12 +91,7 @@ async def ai_chat(
         partial(
             client.chat.completions.create,
             model="qwen3.5-plus",
-            messages=[
-                {
-                    "role": "user",
-                    "content": msg_content,
-                },
-            ],
+            messages=messages,
         )
     )
     ai_reply = completion.choices[0].message.content

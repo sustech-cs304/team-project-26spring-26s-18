@@ -39,9 +39,11 @@
           :class="message.role === 'user' ? 'user-message' : 'ai-message'"
         >
           <div class="message-content">
-            <!-- 文本内容 -->
-            <div v-if="message.content_type === 'text'" class="message-text">{{ message.content }}</div>
-            <!-- 图片内容 -->
+            <!-- assistant的消息全部当markdown解析 -->
+            <div v-if="message.role === 'assistant'" class="message-markdown" v-html="renderMarkdown(message.content)"></div>
+            <!-- 用户文本内容 -->
+            <div v-else-if="message.content_type === 'text'" class="message-text">{{ message.content }}</div>
+            <!-- 用户图片内容 -->
             <div v-else-if="message.content_type === 'image'" class="message-image">
               <img 
                 :src="message.content.replace(/[`]/g, '')" 
@@ -50,9 +52,16 @@
                 style="max-width: 100px; max-height: 100px; object-fit: contain; border-radius: 8px;"
               />
             </div>
-            <!-- PDF内容，仅显示文件名 -->
+            <!-- 用户PDF内容，仅显示文件名 -->
             <div v-else-if="message.content_type === 'pdf'" class="message-text">
               <span style="color: #1976d2; font-weight: bold;">{{ message.name || '无名PDF文件' }}</span>
+            </div>
+            <!-- user的Markdown内容 只显示文件名 -->
+            <div
+              v-else-if="message.content_type === 'markdown' && message.role === 'user'"
+              class="message-text"
+            >
+              <span style="color: #1976d2; font-weight: bold;">{{ message.name || '无名Markdown文件' }}</span>
             </div>
             <!-- 其他类型内容 -->
             <div v-else class="message-text">{{ message.content }}</div>
@@ -103,6 +112,7 @@
 import { ref, onMounted, watch, nextTick } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { ip } from '@/config/config'
+import { marked } from 'marked'
 
 const userStore = useUserStore()
 const sessions = ref([])
@@ -113,7 +123,10 @@ const loading = ref(false)
 const chatContentRef = ref(null)
 const fileInput = ref(null)
 const selectedFiles = ref([])
-
+// 解析Markdown文本
+function renderMarkdown(mdText) {
+  return marked.parse(mdText)
+}
 // 滚动到底部
 function scrollToBottom() {
   nextTick(() => {

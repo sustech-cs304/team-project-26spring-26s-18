@@ -11,6 +11,7 @@
   "dependencies": {
     "@vueup/vue-quill": "^1.2.0",
     "element-plus": "^2.13.2",
+    "marked": "^17.0.5",
     "pinia": "^3.0.4",
     "pinia-plugin-persistedstate": "^4.7.1",
     "quill-autoformat": "^0.1.2",
