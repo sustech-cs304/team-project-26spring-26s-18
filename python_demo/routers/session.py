@@ -1,3 +1,5 @@
+import time
+print("[启动分析] routers/session.py 开始导入", time.time())
 from fastapi import APIRouter, Depends, HTTPException,Body
 from sqlalchemy.orm import Session as DBSession
 from typing import List, Optional

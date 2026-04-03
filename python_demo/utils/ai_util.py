@@ -7,6 +7,7 @@ from crud.session import create_content, get_last_n_content_by_session_id
 import asyncio
 from functools import partial
 from utils.pdf_util import extract_pdf_text
+from utils.rag_util import EmbeddingService, VectorStore
 client = OpenAI(
     api_key=os.getenv("DASHSCOPE_API_KEY"),
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -78,13 +79,32 @@ async def ai_chat(
                 user_msgs.append(md_msg)
     msg_content.append({"type": "text", "text": content})
 
-    # 3. 拼装最终 messages
+
+    # 3 用向量数据库检索与本次问题最相关的3条数据
+    try:
+        embedding_service = EmbeddingService()
+        vector_store = VectorStore()
+        query_embedding = embedding_service.embed(content)
+        related = vector_store.search(query_embedding, top_k=3)
+        related_context = []
+        for chunk in related:
+            related_context.append({
+                "role": "system",
+                "content": [{"type": "text", "text": f"[相关历史] {chunk['content']}"}]
+            })
+    except Exception as e:
+        print(f"[ai_chat] 检索相关历史失败: {e}")
+        related_context = []
+
+    # 4. 拼装最终 messages
     messages = []
     for h in history_contents:
         messages.append({"role": h["role"], "content": h["content"]})
+    # 插入向量数据库中相关内容
+    messages.extend(related_context)
     messages.append({"role": "user", "content": msg_content})
 
-    # 4. 调用大模型
+    # 5. 调用大模型
     loop = asyncio.get_event_loop()
     completion = await loop.run_in_executor(
         None,

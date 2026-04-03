@@ -3,7 +3,7 @@ from utils.jwt_util import JWTUtil
 
 from fastapi import FastAPI
 # 导入routers文件夹中的各个文件的api
-from routers import user, session, test
+from routers import user, session, test, rag
 from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI()
 app.add_middleware(
@@ -35,3 +35,4 @@ app.add_middleware(
 app.include_router(user.router)
 app.include_router(session.router)
 app.include_router(test.router)
+app.include_router(rag.router)
