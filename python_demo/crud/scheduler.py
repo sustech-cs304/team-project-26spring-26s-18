@@ -39,6 +39,18 @@ async def list_user_todos(db: AsyncSession, user_id: int) -> List[PersonalTodo]:
     return result.scalars().all()
 
 
+async def list_user_todos_by_status(db: AsyncSession, user_id: int, status: str) -> List[PersonalTodo]:
+    result = await db.execute(
+        select(PersonalTodo)
+        .where(
+            PersonalTodo.user_id == user_id,
+            PersonalTodo.status == status
+        )
+        .order_by(PersonalTodo.deadline.asc(), PersonalTodo.id.asc())
+    )
+    return result.scalars().all()
+
+
 async def update_todo(
     db: AsyncSession,
     user_id: int,

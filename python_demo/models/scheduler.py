@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, String, Text, DateTime, ForeignKey, Index
+from sqlalchemy import Integer, String, Text, DateTime, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime, UTC
 from .user import Base
@@ -12,7 +12,7 @@ class PersonalTodo(Base):
 	)
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-	user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), nullable=False)
+	user_id: Mapped[int] = mapped_column(Integer, nullable=False)
 	title: Mapped[str] = mapped_column(String(255), nullable=False)
 	content: Mapped[str | None] = mapped_column(Text, nullable=True)
 	# status convention: pending / done / cancelled

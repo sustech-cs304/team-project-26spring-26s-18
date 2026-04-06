@@ -19,6 +19,10 @@ class TodoUpdateSchema(BaseModel):
     deadline: Optional[datetime] = None
 
 
+class TodoStatusUpdateSchema(BaseModel):
+    status: str
+
+
 class TodoReturnSchema(BaseModel):
     id: int
     user_id: int
