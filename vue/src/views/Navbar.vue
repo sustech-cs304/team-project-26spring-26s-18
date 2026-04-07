@@ -12,6 +12,8 @@
         <RouterLink to="/chat" class="nav-link navbar-create-center" :class="{ 'navbar-active': isActive('/chat') }"
           @click="requireLogin">AI 聊天</RouterLink>
         <RouterLink to="/rag" class="nav-link" :class="{ 'navbar-active': isActive('/rag') }">RAG 页面</RouterLink>
+        <RouterLink to="/todo" class="nav-link" :class="{ 'navbar-active': isActive('/todo') }"
+          @click="requireLogin">个人TODO</RouterLink>
       </div>
       <div class="navbar-right">
         <RouterLink to="/user" class="navbar-user-info" style="text-decoration:none; color:inherit;"

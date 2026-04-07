@@ -17,6 +17,11 @@ const routes = [
     component: () => import('@/views/Rag.vue'),
   },
   {
+    path: '/todo',
+    name: 'todo',
+    component: () => import('@/views/Todo.vue'),
+  },
+  {
     path: '/user',
     name: 'user',
     component: () => import('@/views/User.vue'),

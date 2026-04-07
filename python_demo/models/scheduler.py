@@ -9,6 +9,8 @@ class PersonalTodo(Base):
 	__table_args__ = (
 		Index("idx_personal_todo_user_id", "user_id"),
 		Index("idx_personal_todo_deadline", "deadline"),
+		Index("idx_personal_todo_start_time", "start_time"),
+		Index("idx_personal_todo_end_time", "end_time"),
 	)
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -19,7 +21,9 @@ class PersonalTodo(Base):
 	status: Mapped[str] = mapped_column(String(50), default="pending")
 	# priority convention: 1 low, 2 medium, 3 high
 	priority: Mapped[int] = mapped_column(Integer, default=2)
-	deadline: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+	deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	start_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 	updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
