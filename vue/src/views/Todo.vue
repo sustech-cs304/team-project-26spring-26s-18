@@ -8,19 +8,158 @@
         @confirm-action="handleConfirmAction"
       />
 
-      <TodoCalendar
-        :week-days="weekDays"
-        :week-range-label="weekRangeLabel"
-        :events="filteredCurrentWeekTodos"
-        @change-week="changeWeek"
-        @open-add="handleOpenManualAdd"
-        @select-event="handleSelectEvent"
-        @create-at-slot="handleCreateAtSlot"
-      >
-        <template #header-extra>
-          <TodoFilterBar v-model="activeFilter" :options="todoFilterOptions" />
-        </template>
-      </TodoCalendar>
+      <div class="todo-main">
+        <section class="view-switcher-panel">
+          <div>
+            <div class="view-switcher-eyebrow">Scheduler Workspace</div>
+            <h2>Todo 与课表</h2>
+          </div>
+          <div class="view-switcher-tabs">
+            <button
+              class="view-switcher-tab"
+              :class="{ active: activeMainTab === 'schedule' }"
+              @click="activeMainTab = 'schedule'"
+            >
+              日程视图
+            </button>
+            <button
+              class="view-switcher-tab"
+              :class="{ active: activeMainTab === 'timetable' }"
+              @click="activeMainTab = 'timetable'"
+            >
+              课表视图
+            </button>
+          </div>
+        </section>
+
+        <TodoCalendar
+          v-if="activeMainTab === 'schedule'"
+          :week-days="weekDays"
+          :week-range-label="weekRangeLabel"
+          :events="filteredCurrentWeekTodos"
+          :background-markers="visibleOfficialCalendarBackgroundMarkers"
+          @change-week="changeWeek"
+          @open-add="handleOpenManualAdd"
+          @select-event="handleSelectEvent"
+          @create-at-slot="handleCreateAtSlot"
+        >
+          <template #header-extra>
+            <div class="calendar-header-tools">
+              <TodoFilterBar v-model="activeFilter" :options="todoFilterOptions" />
+              <div class="calendar-side-tools">
+                <label class="background-toggle">
+                  <input v-model="showOfficialCalendarBackground" type="checkbox" />
+                  <span>显示校历背景</span>
+                </label>
+                <label class="background-toggle blackboard-toggle">
+                  <input v-model="showBlackboardItems" type="checkbox" />
+                  <span>显示 Blackboard 事项</span>
+                </label>
+                <div class="import-actions">
+                  <button class="import-btn secondary" @click="openImportDialog('official-calendar')">导入官方校历</button>
+                  <button class="import-btn" @click="openImportDialog('course-schedule')">导入课程表</button>
+                  <button class="import-btn blackboard" @click="openImportDialog('blackboard')">导入 Blackboard</button>
+                </div>
+              </div>
+            </div>
+          </template>
+        </TodoCalendar>
+
+        <CourseTimetable
+          v-else
+          :courses="courseScheduleEvents"
+          @import-course-schedule="openImportDialog('course-schedule')"
+        />
+
+        <section class="source-preview-panel">
+          <div class="source-preview-top">
+            <div>
+              <div class="preview-eyebrow">Source Import</div>
+              <h3>已导入来源预览</h3>
+            </div>
+            <div class="preview-tabs">
+              <button
+                class="preview-tab"
+                :class="{ active: activeSourceTab === 'official-calendar' }"
+                @click="activeSourceTab = 'official-calendar'"
+              >
+                官方校历
+              </button>
+              <button
+                class="preview-tab"
+                :class="{ active: activeSourceTab === 'course-schedule' }"
+                @click="activeSourceTab = 'course-schedule'"
+              >
+                课程表
+              </button>
+              <button
+                class="preview-tab"
+                :class="{ active: activeSourceTab === 'blackboard' }"
+                @click="activeSourceTab = 'blackboard'"
+              >
+                Blackboard
+              </button>
+            </div>
+          </div>
+
+          <div v-if="lastImportSummary" class="import-summary">
+            <strong>{{ lastImportSummary.sourceLabel }}</strong>
+            已导入 {{ lastImportSummary.importedCount }} 条，跳过 {{ lastImportSummary.skippedCount }} 条。
+            <span v-if="lastImportSummary.previewCount"> 预览已刷新 {{ lastImportSummary.previewCount }} 条。</span>
+            <div v-if="lastImportSummary.skippedRows?.length" class="import-skipped">
+              {{ lastImportSummary.skippedRows.slice(0, 3).join('；') }}
+            </div>
+          </div>
+
+          <div v-if="activeSourceTab === 'official-calendar'" class="source-list">
+            <div v-if="officialCalendarEvents.length" class="source-count">共 {{ officialCalendarEvents.length }} 条官方校历事件</div>
+            <div v-else class="empty-state">暂无官方校历数据</div>
+            <article v-for="event in officialCalendarEvents" :key="`official-${event.id}`" class="source-card">
+              <div class="source-card-head">
+                <strong>{{ event.title }}</strong>
+                <div class="source-badges">
+                  <span class="source-tag" :class="event.display_mode === 'background' ? 'is-background' : 'is-event'">
+                    {{ getOfficialDisplayModeLabel(event.display_mode) }}
+                  </span>
+                  <span class="source-tag">{{ event.event_type || 'event' }}</span>
+                </div>
+              </div>
+              <div v-if="event.source_year" class="source-meta">来源年份：{{ event.source_year }}</div>
+              <div class="source-meta">{{ formatSourceDateRange(event.start_time, event.end_time) }}</div>
+              <div v-if="event.location" class="source-meta">{{ event.location }}</div>
+              <p v-if="event.description" class="source-desc">{{ event.description }}</p>
+            </article>
+          </div>
+
+          <div v-else-if="activeSourceTab === 'course-schedule'" class="source-list">
+            <div v-if="courseScheduleEvents.length" class="source-count">共 {{ courseScheduleEvents.length }} 条课程表事件</div>
+            <div v-else class="empty-state">暂无课程表数据</div>
+            <article v-for="event in courseScheduleEvents" :key="`course-${event.id}`" class="source-card">
+              <div class="source-card-head">
+                <strong>{{ event.course_name || event.title }}</strong>
+                <span v-if="event.course_code" class="source-tag">{{ event.course_code }}</span>
+              </div>
+              <div class="source-meta">{{ formatSourceDateRange(event.start_time, event.end_time) }}</div>
+              <div v-if="event.location" class="source-meta">{{ event.location }}</div>
+              <div v-if="event.instructor" class="source-meta">教师：{{ event.instructor }}</div>
+              <p v-if="event.description" class="source-desc">{{ event.description }}</p>
+            </article>
+          </div>
+
+          <div v-else class="source-list">
+            <div v-if="blackboardTodos.length" class="source-count">共 {{ blackboardTodos.length }} 条 Blackboard 截止事项</div>
+            <div v-else class="empty-state">暂无 Blackboard 导入数据</div>
+            <article v-for="todo in blackboardTodos" :key="`blackboard-${todo.id}`" class="source-card">
+              <div class="source-card-head">
+                <strong>{{ todo.title }}</strong>
+                <span class="source-tag blackboard-tag">deadline</span>
+              </div>
+              <div v-if="todo.deadline" class="source-meta">截止时间：{{ formatSourceDateRange(todo.deadline, todo.deadline) }}</div>
+              <p v-if="todo.content" class="source-desc">{{ todo.content }}</p>
+            </article>
+          </div>
+        </section>
+      </div>
     </div>
 
     <TodoManualAddDialog
@@ -40,6 +179,14 @@
       @delete="handleDeleteSelectedTodo"
       @update-status="handleQuickStatusUpdate"
     />
+
+    <TodoSourceImportDialog
+      v-model="importDialogVisible"
+      :form="importForm"
+      :submitting="importSubmitting"
+      @update:form="handleImportFormUpdate"
+      @submit="handleSubmitImport"
+    />
   </div>
 </template>
 
@@ -48,10 +195,25 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import TodoAiPanel from '@/components/todo/TodoAiPanel.vue'
 import TodoCalendar from '@/components/todo/TodoCalendar.vue'
+import CourseTimetable from '@/components/todo/CourseTimetable.vue'
 import TodoDetailDialog from '@/components/todo/TodoDetailDialog.vue'
 import TodoFilterBar from '@/components/todo/TodoFilterBar.vue'
 import TodoManualAddDialog from '@/components/todo/TodoManualAddDialog.vue'
-import { createTodo, deleteTodo, getTodoList, updateTodo, updateTodoStatus } from '@/api/todo'
+import TodoSourceImportDialog from '@/components/todo/TodoSourceImportDialog.vue'
+import {
+  createTodo,
+  deleteTodo,
+  getBlackboardList,
+  getCourseScheduleList,
+  getOfficialCalendarList,
+  getTodoList,
+  importBlackboard,
+  importCourseSchedule,
+  importCourseScheduleXlsx,
+  importOfficialCalendar,
+  updateTodo,
+  updateTodoStatus,
+} from '@/api/todo'
 import { useUserStore } from '@/stores/user'
 import {
   addDays,
@@ -83,6 +245,18 @@ const selectedTodo = ref(null)
 const aiActionFeedback = ref(null)
 const activeFilter = ref('all')
 const manualAddInitialValues = ref(null)
+const importDialogVisible = ref(false)
+const importSubmitting = ref(false)
+const activeMainTab = ref('schedule')
+const activeSourceTab = ref('official-calendar')
+const officialCalendarEvents = ref([])
+const courseScheduleEvents = ref([])
+const blackboardTodos = ref([])
+const officialCalendarBackgroundMarkers = ref([])
+const showOfficialCalendarBackground = ref(true)
+const showBlackboardItems = ref(true)
+const lastImportSummary = ref(null)
+const importForm = ref(buildDefaultImportForm())
 
 const todoFilterOptions = [
   { label: '全部', value: 'all' },
@@ -122,6 +296,12 @@ const currentWeekTodos = computed(() => {
   const weekStart = `${weekStartKey}T00:00:00`
   const weekEnd = `${weekEndKey}T00:00:00`
   return allTodos.value
+    .filter((todo) => {
+      if (showBlackboardItems.value) {
+        return true
+      }
+      return todo.import_source !== 'blackboard'
+    })
     .filter((todo) => {
       const { start, end } = getTodoEffectiveRange(todo)
       return start < weekEnd && end > weekStart
@@ -167,6 +347,41 @@ const filteredCurrentWeekTodos = computed(() => {
   })
 })
 
+const currentWeekQueryRange = computed(() => {
+  const startKey = formatDateParts(currentWeekStart.value)
+  const endVisibleDay = addDays(currentWeekEnd.value, -1)
+  const endKey = formatDateParts(endVisibleDay)
+  return {
+    start_time: `${startKey}T00:00:00`,
+    end_time: `${endKey}T23:59:59`,
+  }
+})
+
+const visibleOfficialCalendarBackgroundMarkers = computed(() => {
+  if (!showOfficialCalendarBackground.value) {
+    return []
+  }
+  return officialCalendarBackgroundMarkers.value
+})
+
+function buildDefaultImportForm(sourceType = 'official-calendar') {
+  const isCourseSchedule = sourceType === 'course-schedule'
+  const now = new Date()
+  const currentMonth = now.getMonth() + 1
+  const defaultTerm = currentMonth >= 9 ? 'fall' : 'spring'
+  return {
+    sourceType,
+    contentType: sourceType === 'blackboard' ? 'ics' : isCourseSchedule ? 'xlsx' : 'auto',
+    inputMode: isCourseSchedule ? 'file' : 'paste',
+    replaceExisting: true,
+    term: defaultTerm,
+    year: now.getFullYear(),
+    content: '',
+    fileName: '',
+    file: null,
+  }
+}
+
 async function loadTodos() {
   if (!userStore.isLoggedIn) {
     allTodos.value = []
@@ -178,6 +393,46 @@ async function loadTodos() {
     allTodos.value = Array.isArray(result.data) ? result.data : []
   } catch (error) {
     ElMessage.error(error.message || '加载待办失败')
+  }
+}
+
+async function loadImportedSources() {
+  if (!userStore.isLoggedIn) {
+    officialCalendarEvents.value = []
+    courseScheduleEvents.value = []
+    blackboardTodos.value = []
+    return
+  }
+
+  try {
+    const [officialResult, courseResult, blackboardResult] = await Promise.all([
+      getOfficialCalendarList(),
+      getCourseScheduleList(),
+      getBlackboardList(),
+    ])
+    officialCalendarEvents.value = Array.isArray(officialResult.data) ? officialResult.data : []
+    courseScheduleEvents.value = Array.isArray(courseResult.data) ? courseResult.data : []
+    blackboardTodos.value = Array.isArray(blackboardResult.data) ? blackboardResult.data : []
+  } catch (error) {
+    ElMessage.error(error.message || '加载导入来源失败')
+  }
+}
+
+async function loadOfficialCalendarBackgroundMarkers() {
+  if (!userStore.isLoggedIn) {
+    officialCalendarBackgroundMarkers.value = []
+    return
+  }
+
+  try {
+    const result = await getOfficialCalendarList({
+      display_mode: 'background',
+      start_time: currentWeekQueryRange.value.start_time,
+      end_time: currentWeekQueryRange.value.end_time,
+    })
+    officialCalendarBackgroundMarkers.value = Array.isArray(result.data) ? result.data : []
+  } catch (error) {
+    ElMessage.error(error.message || '加载校历背景失败')
   }
 }
 
@@ -222,6 +477,12 @@ function addMinutesToLocalDateTime(value, minutesToAdd) {
 function handleOpenManualAdd() {
   manualAddInitialValues.value = null
   dialogVisible.value = true
+}
+
+function openImportDialog(sourceType) {
+  importForm.value = buildDefaultImportForm(sourceType)
+  activeSourceTab.value = sourceType
+  importDialogVisible.value = true
 }
 
 function handleCreateAtSlot(slot) {
@@ -283,6 +544,112 @@ function pushAiFeedback(type, message) {
     id: Date.now(),
     type,
     message,
+  }
+}
+
+function handleImportFormUpdate(nextForm) {
+  importForm.value = nextForm
+}
+
+function formatSourceDateRange(startTime, endTime) {
+  const start = getSourceDisplayTime(startTime)
+  const end = getSourceDisplayTime(endTime)
+  if (!start && !end) return '未提供时间'
+  if (!end || start === end) return start
+  return `${start} - ${end}`
+}
+
+function getSourceDisplayTime(value) {
+  if (!value) return ''
+  const text = String(value).replace('T', ' ')
+  return text.length > 16 ? text.slice(0, 16) : text
+}
+
+function getOfficialDisplayModeLabel(value) {
+  return value === 'background' ? '背景标记' : '官方活动'
+}
+
+async function handleSubmitImport() {
+  if (!userStore.isLoggedIn) {
+    ElMessage.error('请先登录')
+    return
+  }
+
+  const isCourseScheduleXlsx = importForm.value.sourceType === 'course-schedule'
+    && importForm.value.inputMode === 'file'
+    && importForm.value.contentType === 'xlsx'
+
+  if (isCourseScheduleXlsx && !importForm.value.file) {
+    ElMessage.error('请先选择 .xlsx 课程表文件')
+    return
+  }
+
+  if (isCourseScheduleXlsx && !['spring', 'fall'].includes(importForm.value.term)) {
+    ElMessage.error('请选择有效学期')
+    return
+  }
+
+  if (isCourseScheduleXlsx && !Number.isInteger(Number(importForm.value.year))) {
+    ElMessage.error('请选择有效年份')
+    return
+  }
+
+  const content = (importForm.value.content || '').trim()
+  if (!isCourseScheduleXlsx && !content) {
+    ElMessage.error('请先提供导入内容')
+    return
+  }
+
+  importSubmitting.value = true
+  try {
+    const result = isCourseScheduleXlsx
+      ? await importCourseScheduleXlsx(importForm.value.file, importForm.value.replaceExisting, {
+        term: importForm.value.term,
+        year: Number(importForm.value.year),
+      })
+      : await (
+        importForm.value.sourceType === 'course-schedule'
+          ? importCourseSchedule({
+            content,
+            content_type: importForm.value.contentType,
+            replace_existing: importForm.value.replaceExisting,
+          })
+          : importForm.value.sourceType === 'blackboard'
+            ? importBlackboard({
+              content,
+              content_type: importForm.value.contentType,
+              replace_existing: importForm.value.replaceExisting,
+            })
+            : importOfficialCalendar({
+              content,
+              content_type: importForm.value.contentType,
+              replace_existing: importForm.value.replaceExisting,
+            })
+      )
+    const importData = result?.data || {}
+    lastImportSummary.value = {
+      sourceType: importForm.value.sourceType,
+      sourceLabel: importForm.value.sourceType === 'course-schedule'
+        ? '课程表'
+        : importForm.value.sourceType === 'blackboard'
+          ? 'Blackboard'
+          : '官方校历',
+      importedCount: Number(importData.imported_count || 0),
+      skippedCount: Number(importData.skipped_count || 0),
+      previewCount: Number(importData.preview_count || 0),
+      skippedRows: Array.isArray(importData.skipped_rows) ? importData.skipped_rows : [],
+    }
+
+    await loadImportedSources()
+    if (importForm.value.sourceType === 'official-calendar') {
+      await loadOfficialCalendarBackgroundMarkers()
+    }
+    importDialogVisible.value = false
+    ElMessage.success(`${lastImportSummary.value.sourceLabel}导入完成`)
+  } catch (error) {
+    ElMessage.error(error.message || '导入失败')
+  } finally {
+    importSubmitting.value = false
   }
 }
 
@@ -396,6 +763,8 @@ async function handleQuickStatusUpdate(status) {
 
 onMounted(() => {
   loadTodos()
+  loadImportedSources()
+  loadOfficialCalendarBackgroundMarkers()
 })
 
 watch(
@@ -403,8 +772,24 @@ watch(
   (isLoggedIn) => {
     if (isLoggedIn) {
       loadTodos()
+      loadImportedSources()
+      loadOfficialCalendarBackgroundMarkers()
     } else {
       allTodos.value = []
+      officialCalendarEvents.value = []
+      courseScheduleEvents.value = []
+      blackboardTodos.value = []
+      officialCalendarBackgroundMarkers.value = []
+      lastImportSummary.value = null
+    }
+  }
+)
+
+watch(
+  () => [currentWeekQueryRange.value.start_time, currentWeekQueryRange.value.end_time, userStore.isLoggedIn],
+  ([, , isLoggedIn]) => {
+    if (isLoggedIn) {
+      loadOfficialCalendarBackgroundMarkers()
     }
   }
 )
@@ -429,9 +814,270 @@ watch(
   align-items: stretch;
 }
 
+.todo-main {
+  display: flex;
+  flex-direction: column;
+}
+
+.view-switcher-panel {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  padding: 20px 24px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(107, 135, 181, 0.16);
+  box-shadow: 0 18px 40px rgba(79, 103, 137, 0.12);
+}
+
+.view-switcher-eyebrow {
+  color: #4d6c98;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.view-switcher-panel h2 {
+  margin: 6px 0 0;
+  color: #203047;
+}
+
+.view-switcher-tabs {
+  display: inline-flex;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 999px;
+  background: #edf3fb;
+}
+
+.view-switcher-tab {
+  border: none;
+  border-radius: 999px;
+  padding: 11px 18px;
+  background: transparent;
+  color: #47607f;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.view-switcher-tab.active {
+  background: linear-gradient(135deg, #153e8f, #2f73d9);
+  color: #fff;
+  box-shadow: 0 10px 18px rgba(32, 71, 132, 0.22);
+}
+
 @media (max-width: 1200px) {
   .todo-shell {
     grid-template-columns: 1fr;
   }
+}
+
+@media (max-width: 900px) {
+  .view-switcher-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .view-switcher-tabs {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+.calendar-header-tools {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.calendar-side-tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.background-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 999px;
+  background: rgba(232, 239, 251, 0.9);
+  color: #35506f;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.background-toggle input {
+  margin: 0;
+}
+
+.background-toggle.blackboard-toggle {
+  background: rgba(245, 234, 217, 0.92);
+  color: #72561d;
+}
+
+.import-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.import-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #1745a3, #2f73d9);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.import-btn.secondary {
+  background: linear-gradient(135deg, #14576b, #2288a6);
+}
+
+.import-btn.blackboard {
+  background: linear-gradient(135deg, #6a4f1d, #9e7730);
+}
+
+.source-preview-panel {
+  margin-top: 18px;
+  padding: 20px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(107, 135, 181, 0.16);
+  box-shadow: 0 18px 40px rgba(79, 103, 137, 0.12);
+}
+
+.source-preview-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.preview-eyebrow {
+  color: #4d6c98;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.source-preview-top h3 {
+  margin: 6px 0 0;
+  color: #203047;
+}
+
+.preview-tabs {
+  display: flex;
+  gap: 10px;
+}
+
+.preview-tab {
+  border: 1px solid rgba(69, 96, 142, 0.18);
+  background: #fff;
+  color: #47607f;
+  border-radius: 999px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.preview-tab.active {
+  background: #153e8f;
+  color: #fff;
+}
+
+.import-summary {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #eef5ff;
+  color: #274166;
+}
+
+.import-skipped {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #5c6f8f;
+}
+
+.source-list {
+  margin-top: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.source-count {
+  color: #58708f;
+  font-size: 13px;
+}
+
+.empty-state {
+  padding: 18px;
+  border-radius: 16px;
+  background: #f5f8fc;
+  color: #647991;
+}
+
+.source-card {
+  padding: 16px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(252, 253, 255, 0.98), rgba(244, 248, 253, 0.96));
+  border: 1px solid rgba(107, 135, 181, 0.14);
+}
+
+.source-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.source-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.source-tag {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #e8effb;
+  color: #31538c;
+  font-size: 12px;
+}
+
+.source-tag.is-background {
+  background: #e8f4ec;
+  color: #2d6b46;
+}
+
+.source-tag.is-event {
+  background: #fff1df;
+  color: #8a5716;
+}
+
+.source-tag.blackboard-tag {
+  background: #f5ead9;
+  color: #7b5b1a;
+}
+
+.source-meta {
+  margin-top: 8px;
+  color: #546b86;
+  font-size: 13px;
+}
+
+.source-desc {
+  margin: 10px 0 0;
+  color: #33455e;
+  line-height: 1.6;
 }
 </style>

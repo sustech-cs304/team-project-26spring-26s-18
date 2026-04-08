@@ -2,7 +2,7 @@ import asyncio
 
 from config.db_config import async_engine
 from models.user import Base
-from models.scheduler import PersonalTodo, OfficialCalendarEvent
+from models.scheduler import CourseScheduleEvent, OfficialCalendarEvent, PersonalTodo
 
 
 async def init_scheduler_tables():
@@ -13,6 +13,7 @@ async def init_scheduler_tables():
                 tables=[
                     PersonalTodo.__table__,
                     OfficialCalendarEvent.__table__,
+                    CourseScheduleEvent.__table__,
                 ]
             )
         )

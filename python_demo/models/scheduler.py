@@ -24,6 +24,8 @@ class PersonalTodo(Base):
 	deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 	start_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 	end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+	import_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+	import_uid: Mapped[str | None] = mapped_column(String(255), nullable=True)
 	created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 	updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
@@ -38,7 +40,41 @@ class OfficialCalendarEvent(Base):
 	id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 	title: Mapped[str] = mapped_column(String(255), nullable=False)
 	description: Mapped[str | None] = mapped_column(Text, nullable=True)
+	display_mode: Mapped[str] = mapped_column(String(50), default="event")
+	source_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
 	event_type: Mapped[str] = mapped_column(String(50), default="event")
+	start_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+	end_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+	location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+	created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+	updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
+class CourseScheduleEvent(Base):
+	__tablename__ = "course_schedule_event"
+	__table_args__ = (
+		Index("idx_course_schedule_event_user_id", "user_id"),
+		Index("idx_course_schedule_event_start_time", "start_time"),
+		Index("idx_course_schedule_event_end_time", "end_time"),
+	)
+
+	id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+	user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+	title: Mapped[str] = mapped_column(String(255), nullable=False)
+	course_name: Mapped[str] = mapped_column(String(255), nullable=False)
+	course_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+	instructor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+	description: Mapped[str | None] = mapped_column(Text, nullable=True)
+	week_info: Mapped[str | None] = mapped_column(String(255), nullable=True)
+	section_text: Mapped[str | None] = mapped_column(String(100), nullable=True)
+	weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)
+	term_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+	raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+	week_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+	week_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+	week_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+	import_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+	import_uid: Mapped[str | None] = mapped_column(String(255), nullable=True)
 	start_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 	end_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 	location: Mapped[str | None] = mapped_column(String(255), nullable=True)

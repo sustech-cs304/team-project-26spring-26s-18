@@ -80,6 +80,8 @@ class TodoReturnSchema(BaseModel):
     deadline: Optional[datetime] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
+    import_source: Optional[str] = None
+    import_uid: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -91,6 +93,8 @@ class OfficialCalendarEventSchema(BaseModel):
     id: int
     title: str
     description: Optional[str] = None
+    display_mode: str
+    source_year: Optional[int] = None
     event_type: str
     start_time: datetime
     end_time: datetime
@@ -100,6 +104,50 @@ class OfficialCalendarEventSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class CourseScheduleEventSchema(BaseModel):
+    id: int
+    user_id: int
+    title: str
+    course_name: str
+    course_code: Optional[str] = None
+    instructor: Optional[str] = None
+    description: Optional[str] = None
+    week_info: Optional[str] = None
+    section_text: Optional[str] = None
+    weekday: Optional[int] = None
+    term_label: Optional[str] = None
+    raw_text: Optional[str] = None
+    week_start: Optional[int] = None
+    week_end: Optional[int] = None
+    week_type: Optional[str] = None
+    import_source: Optional[str] = None
+    import_uid: Optional[str] = None
+    start_time: datetime
+    end_time: datetime
+    location: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SourceImportPayloadSchema(BaseModel):
+    rows: Optional[List[dict]] = None
+    content: Optional[str] = None
+    content_type: str = "auto"
+    replace_existing: bool = True
+
+
+class SourceImportResultSchema(BaseModel):
+    imported_count: int
+    skipped_count: int = 0
+    replace_existing: bool
+    preview_count: int = 0
+    preview: List[dict] = Field(default_factory=list)
+    skipped_rows: List[str] = Field(default_factory=list)
 
 
 class ScheduleEventSchema(BaseModel):

@@ -10,8 +10,9 @@ function buildUrl(path) {
 
 export async function request(path, options = {}) {
   const userStore = useUserStore()
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
   const headers = {
-    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(!isFormData && options.body ? { 'Content-Type': 'application/json' } : {}),
     ...(userStore.token ? { token: userStore.token } : {}),
     ...(options.headers || {}),
   }

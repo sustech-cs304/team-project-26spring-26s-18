@@ -32,6 +32,10 @@
             <span>类型</span>
             <strong>{{ todo.start_time && todo.end_time ? '日程时间块' : '截止型待办' }}</strong>
           </div>
+          <div v-if="todo.import_source === 'blackboard'" class="detail-item">
+            <span>来源</span>
+            <strong>Blackboard</strong>
+          </div>
         </div>
 
         <div class="detail-content" :class="{ 'is-done-content': todo.status === 'done' }">

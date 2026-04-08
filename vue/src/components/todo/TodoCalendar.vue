@@ -52,6 +52,17 @@
                 @click="handleDayColumnClick(day.iso, $event)"
               >
                 <div
+                  v-for="marker in getBackgroundMarkersForDay(day.iso)"
+                  :key="`marker-${marker.id ?? marker.title}-${day.iso}`"
+                  class="background-marker"
+                  :style="getBackgroundMarkerStyle(marker)"
+                >
+                  <div class="background-marker-label" :style="getBackgroundMarkerLabelStyle(marker)">
+                    {{ marker.title }}
+                  </div>
+                </div>
+
+                <div
                   v-for="line in 24"
                   :key="line"
                   class="hour-line"
@@ -76,7 +87,10 @@
                   :title="segment.todo.title"
                   @click.stop="emit('select-event', segment.todo)"
                 >
-                  <div v-if="shouldShowTime(segment)" class="event-time">{{ formatTime(segment) }}</div>
+                  <div v-if="shouldShowTime(segment) || isBlackboardTodo(segment.todo)" class="event-meta-row">
+                    <div v-if="shouldShowTime(segment)" class="event-time">{{ formatTime(segment) }}</div>
+                    <div v-if="isBlackboardTodo(segment.todo)" class="event-source-badge">bb</div>
+                  </div>
                   <div class="event-title">{{ segment.todo.title }}</div>
                 </div>
               </div>
@@ -105,6 +119,10 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  backgroundMarkers: {
+    type: Array,
+    default: () => [],
+  },
 })
 
 const emit = defineEmits(['change-week', 'open-add', 'select-event', 'create-at-slot'])
@@ -118,6 +136,9 @@ const ALL_DAY_LIKE_MINUTES = 23 * 60
 const DEADLINE_MIN_HEIGHT = 56
 const hourLabels = Array.from({ length: 24 }, (_, index) => `${String(index).padStart(2, '0')}:00`)
 const eventSegments = computed(() => props.events.flatMap((item) => splitTodoIntoDaySegments(item)))
+const dayBackgroundMarkers = computed(() => {
+  return Object.fromEntries(props.weekDays.map((day) => [day.iso, buildDayBackgroundMarkers(day.iso)]))
+})
 const dayEventLayouts = computed(() => {
   return Object.fromEntries(props.weekDays.map((day) => [day.iso, buildDayEventLayout(day.iso)]))
 })
@@ -150,6 +171,10 @@ function syncScrollbarOffset() {
 
 function getEventsForDay(dayIso) {
   return dayEventLayouts.value[dayIso] || []
+}
+
+function getBackgroundMarkersForDay(dayIso) {
+  return dayBackgroundMarkers.value[dayIso] || []
 }
 
 function handleDayColumnClick(dayIso, event) {
@@ -227,6 +252,56 @@ function buildDayEventLayout(dayIso) {
 
   finalizeCluster()
   return laidOutSegments
+}
+
+function buildDayBackgroundMarkers(dayIso) {
+  return props.backgroundMarkers
+    .filter((marker) => overlapsDay(marker, dayIso))
+    .sort((a, b) => {
+      const startCompare = String(a?.start_time || '').localeCompare(String(b?.start_time || ''))
+      if (startCompare !== 0) return startCompare
+      return String(a?.title || '').localeCompare(String(b?.title || ''))
+    })
+    .map((marker, index) => ({
+      ...marker,
+      layerIndex: index,
+    }))
+}
+
+function overlapsDay(marker, dayIso) {
+  const startDay = getLocalDatePart(marker?.start_time)
+  const endDay = getLocalDatePart(marker?.end_time || marker?.start_time)
+  if (!startDay || !endDay) return false
+  return startDay <= dayIso && dayIso <= endDay
+}
+
+function getBackgroundMarkerStyle(marker) {
+  const stripeWidth = 10 + (marker.layerIndex % 3) * 2
+  const palette = [
+    ['rgba(201, 161, 88, 0.14)', 'rgba(201, 161, 88, 0.03)'],
+    ['rgba(201, 133, 89, 0.14)', 'rgba(201, 133, 89, 0.03)'],
+    ['rgba(136, 123, 171, 0.14)', 'rgba(136, 123, 171, 0.03)'],
+    ['rgba(173, 151, 104, 0.14)', 'rgba(173, 151, 104, 0.03)'],
+  ]
+  const [accent, fill] = palette[marker.layerIndex % palette.length]
+
+  return {
+    top: '0',
+    left: `${4 + marker.layerIndex * 4}px`,
+    width: `calc(100% - ${8 + marker.layerIndex * 4}px)`,
+    height: '100%',
+    background: `linear-gradient(180deg, ${accent} 0%, ${fill} 32%, rgba(255,255,255,0) 100%)`,
+    borderLeft: `${stripeWidth}px solid ${accent}`,
+    zIndex: 0,
+  }
+}
+
+function getBackgroundMarkerLabelStyle(marker) {
+  return {
+    top: `${12 + marker.layerIndex * 28}px`,
+    left: `${18 + marker.layerIndex * 4}px`,
+    zIndex: 1,
+  }
 }
 
 function getEventStyle(segment) {
@@ -316,6 +391,10 @@ function shouldShowTime(segment) {
   return true
 }
 
+function isBlackboardTodo(todo) {
+  return todo?.import_source === 'blackboard'
+}
+
 function priorityClass(priority) {
   if (priority === 3) return 'is-high'
   if (priority === 1) return 'is-low'
@@ -332,7 +411,6 @@ function statusClass(status) {
   --hour-height: 64px;
   display: flex;
   flex-direction: column;
-  min-height: 100%;
   padding: 24px;
   border-radius: 28px;
   background: linear-gradient(180deg, #ffffff 0%, #f5f8fc 100%);
@@ -496,7 +574,33 @@ function statusClass(status) {
   overflow: hidden;
 }
 
+.background-marker {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 18px;
+}
+
+.background-marker-label {
+  position: absolute;
+  max-height: calc(100% - 24px);
+  padding: 10px 6px;
+  border-radius: 16px;
+  background: rgba(255, 250, 242, 0.78);
+  color: #80673d;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  line-height: 1.15;
+  overflow: hidden;
+  box-shadow: 0 6px 14px rgba(120, 100, 67, 0.10);
+  backdrop-filter: blur(2px);
+}
+
 .hour-line {
+  position: relative;
+  z-index: 1;
   height: var(--hour-height);
   border-top: 1px solid #eef3f8;
   box-sizing: border-box;
@@ -508,6 +612,7 @@ function statusClass(status) {
 
 .todo-event {
   position: absolute;
+  z-index: 3;
   padding: 10px 12px;
   border-radius: 14px;
   box-shadow: 0 12px 24px rgba(40, 70, 110, 0.12);
@@ -561,14 +666,40 @@ function statusClass(status) {
   padding-bottom: 11px;
 }
 
+.event-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+
 .event-time {
   font-size: 12px;
   font-weight: 700;
   opacity: 0.78;
-  margin-bottom: 6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.event-source-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(48, 108, 184, 0.12);
+  color: #2f69a8;
+  border: 1px solid rgba(48, 108, 184, 0.14);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  flex: 0 0 auto;
 }
 
 .event-title {
@@ -587,9 +718,18 @@ function statusClass(status) {
   -webkit-line-clamp: 1;
 }
 
-.todo-event.is-narrow .event-time {
+.todo-event.is-narrow .event-meta-row {
   margin-bottom: 4px;
+}
+
+.todo-event.is-narrow .event-time {
   font-size: 11px;
+}
+
+.todo-event.is-narrow .event-source-badge {
+  min-width: 22px;
+  height: 17px;
+  font-size: 9px;
 }
 
 .todo-event.is-narrow .event-title {
@@ -598,8 +738,11 @@ function statusClass(status) {
   -webkit-line-clamp: 1;
 }
 
-.todo-event.is-all-day-like .event-time {
+.todo-event.is-all-day-like .event-meta-row {
   margin-bottom: 4px;
+}
+
+.todo-event.is-all-day-like .event-time {
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
