@@ -9,10 +9,23 @@ try:
     from openpyxl import load_workbook
 except ModuleNotFoundError:  # pragma: no cover - optional for non-XLSX helper verification
     load_workbook = None
-from sqlalchemy import delete, func, inspect, select
+from sqlalchemy import and_, delete, func, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.scheduler import CourseScheduleEvent, OfficialCalendarEvent, PersonalTodo
+from schemas.scheduler import (
+    ScheduleAnalysisSummarySchema,
+    ScheduleAggregateData,
+    ScheduleAiContextSchema,
+    ScheduleCandidateFocusBlockSchema,
+    ScheduleCandidateRescheduleOptionSchema,
+    ScheduleCandidateSplitOptionSchema,
+    ScheduleCandidateSplitSegmentSchema,
+    ScheduleConflictSchema,
+    ScheduleEventSchema,
+    SchedulePileupSchema,
+    ScheduleSuggestionSchema,
+)
 
 
 TODO_ORDER_TIME = func.coalesce(PersonalTodo.start_time, PersonalTodo.deadline, PersonalTodo.end_time)
@@ -69,6 +82,10 @@ CLASS_INFO_PATTERN = re.compile(
 ROOM_CODE_PATTERN = re.compile(r"([A-Za-z]{1,4}\s*[-_]?\s*\d{2,4}|\d+[A-Za-z]?\s*[-_]?\s*\d{2,4})")
 ONLINE_LOCATION_PATTERN = re.compile(r"(线上|网课|腾讯会议|会议号|直播|ZOOM|Zoom|zoom)")
 LATIN_NAME_TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z.'-]*")
+SUGGESTION_DAY_START_HOUR = 7
+SUGGESTION_DAY_END_HOUR = 22
+DEFAULT_FOCUS_BLOCK_MINUTES = 120
+MIN_SPLIT_SEGMENT_MINUTES = 60
 
 
 async def create_todo(
@@ -1301,3 +1318,994 @@ async def list_blackboard_todos(
         .order_by(TODO_ORDER_TIME.asc(), PersonalTodo.id.asc())
     )
     return result.scalars().all()
+
+
+def _build_schedule_primary_time(event: ScheduleEventSchema) -> datetime | None:
+    return event.start_time or event.deadline
+
+
+def _has_explicit_range(event: ScheduleEventSchema) -> bool:
+    return event.start_time is not None and event.end_time is not None
+
+
+def _is_pending_deadline_todo(event: ScheduleEventSchema) -> bool:
+    return (
+        event.source == "personal_todo"
+        and event.deadline is not None
+        and not _has_explicit_range(event)
+        and event.status not in {"done", "cancelled"}
+    )
+
+
+def _calculate_risk_level(
+    conflicts: List[ScheduleConflictSchema],
+    pileups: List[SchedulePileupSchema],
+    suggestions: List[ScheduleSuggestionSchema],
+) -> str:
+    if any(item.level == "high" for item in conflicts) or any(item.level == "high" for item in pileups):
+        return "high"
+    if conflicts or pileups or any(item.level in {"medium", "high"} for item in suggestions):
+        return "medium"
+    return "low"
+
+
+def _build_schedule_sort_key(event: ScheduleEventSchema) -> tuple:
+    """
+    Timeline ordering rule:
+    1. Scheduled items are ordered by start_time ascending.
+    2. Deadline-only items are ordered by deadline ascending.
+    3. Items with the same primary time place scheduled items before deadline-only items.
+    4. Remaining ties are broken by end_time, then source, then source_id for deterministic output.
+    """
+    primary_time = _build_schedule_primary_time(event) or datetime.max
+    is_deadline_only = event.start_time is None and event.deadline is not None
+    end_marker = event.end_time or event.deadline or datetime.max
+    return (
+        primary_time,
+        1 if is_deadline_only else 0,
+        end_marker,
+        event.source,
+        event.source_id,
+    )
+
+
+async def load_personal_todos_by_window(
+    db: AsyncSession,
+    user_id: int,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    include_blackboard: bool = True,
+    include_completed: bool = True,
+) -> List[PersonalTodo]:
+    stmt = select(PersonalTodo).where(PersonalTodo.user_id == user_id)
+
+    if not include_blackboard:
+        stmt = stmt.where(
+            or_(
+                PersonalTodo.import_source.is_(None),
+                PersonalTodo.import_source != BLACKBOARD_IMPORT_SOURCE,
+            )
+        )
+
+    if not include_completed:
+        stmt = stmt.where(PersonalTodo.status != "done")
+
+    scheduled_overlap_clauses = []
+    if start_time is not None:
+        scheduled_overlap_clauses.append(PersonalTodo.end_time >= start_time)
+    if end_time is not None:
+        scheduled_overlap_clauses.append(PersonalTodo.start_time <= end_time)
+
+    scheduled_window_clause = and_(
+        PersonalTodo.start_time.is_not(None),
+        PersonalTodo.end_time.is_not(None),
+        *scheduled_overlap_clauses,
+    )
+
+    deadline_window_clauses = [PersonalTodo.deadline.is_not(None)]
+    if start_time is not None:
+        deadline_window_clauses.append(PersonalTodo.deadline >= start_time)
+    if end_time is not None:
+        deadline_window_clauses.append(PersonalTodo.deadline <= end_time)
+    deadline_window_clause = and_(*deadline_window_clauses)
+
+    if start_time is not None or end_time is not None:
+        stmt = stmt.where(or_(scheduled_window_clause, deadline_window_clause))
+
+    stmt = stmt.order_by(TODO_ORDER_TIME.asc(), PersonalTodo.id.asc())
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+async def load_official_calendar_events_by_window(
+    db: AsyncSession,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    include_background_markers: bool = True,
+) -> List[OfficialCalendarEvent]:
+    display_mode = None if include_background_markers else "event"
+    return await list_official_calendar_events(
+        db=db,
+        display_mode=display_mode,
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+
+def normalize_personal_todo_to_schedule_event(todo: PersonalTodo) -> ScheduleEventSchema:
+    """
+    Personal todos are user-managed items, so scheduled personal blocks are movable by default.
+    In this backend, `is_flexible` means the rule layer may generate legal adjustment options for the event.
+    """
+    is_scheduled = todo.start_time is not None and todo.end_time is not None
+    source_meta: dict[str, Any] = {
+        "import_source": todo.import_source,
+        "import_uid": todo.import_uid,
+    }
+    if todo.import_source == BLACKBOARD_IMPORT_SOURCE:
+        source_meta["origin_domain"] = "blackboard"
+
+    return ScheduleEventSchema(
+        source="personal_todo",
+        source_type="personal_todo",
+        source_id=todo.id,
+        user_id=todo.user_id,
+        kind="scheduled_todo" if is_scheduled else "deadline_todo",
+        title=todo.title,
+        description=todo.content,
+        start_time=todo.start_time,
+        end_time=todo.end_time,
+        deadline=todo.deadline,
+        status=todo.status,
+        priority=todo.priority,
+        display_mode="event",
+        is_blocking=is_scheduled,
+        is_flexible=True,
+        source_meta=source_meta,
+    )
+
+
+def normalize_official_calendar_event_to_schedule_event(
+    event: OfficialCalendarEvent,
+) -> ScheduleEventSchema:
+    is_background = event.display_mode == "background"
+    return ScheduleEventSchema(
+        source="official_calendar_event",
+        source_type="official_calendar_event",
+        source_id=event.id,
+        kind="background_marker" if is_background else "official_event",
+        title=event.title,
+        description=event.description,
+        start_time=event.start_time,
+        end_time=event.end_time,
+        location=event.location,
+        display_mode=event.display_mode,
+        is_blocking=not is_background,
+        is_flexible=False,
+        source_meta={
+            "source_year": event.source_year,
+            "event_type": event.event_type,
+            "display_mode": event.display_mode,
+        },
+    )
+
+
+def normalize_course_schedule_event_to_schedule_event(
+    event: CourseScheduleEvent,
+) -> ScheduleEventSchema:
+    return ScheduleEventSchema(
+        source="course_schedule_event",
+        source_type="course_schedule_event",
+        source_id=event.id,
+        user_id=event.user_id,
+        kind="course_event",
+        title=event.title,
+        description=event.description,
+        start_time=event.start_time,
+        end_time=event.end_time,
+        deadline=None,
+        status=None,
+        location=event.location,
+        display_mode="event",
+        is_blocking=True,
+        is_flexible=False,
+        source_meta={
+            "course_name": event.course_name,
+            "course_code": event.course_code,
+            "instructor": event.instructor,
+            "term_label": event.term_label,
+            "weekday": event.weekday,
+            "section_text": event.section_text,
+            "week_info": event.week_info,
+            "week_start": event.week_start,
+            "week_end": event.week_end,
+            "week_type": event.week_type,
+            "raw_text": event.raw_text,
+            "import_source": event.import_source,
+            "import_uid": event.import_uid,
+        },
+    )
+
+
+def merge_schedule_timeline(
+    personal_todos: List[PersonalTodo],
+    official_events: List[OfficialCalendarEvent],
+    course_events: List[CourseScheduleEvent] | None = None,
+) -> List[ScheduleEventSchema]:
+    timeline = [normalize_personal_todo_to_schedule_event(todo) for todo in personal_todos]
+    timeline.extend(normalize_official_calendar_event_to_schedule_event(event) for event in official_events)
+    timeline.extend(normalize_course_schedule_event_to_schedule_event(event) for event in (course_events or []))
+    return sorted(timeline, key=_build_schedule_sort_key)
+
+
+async def build_schedule_timeline(
+    db: AsyncSession,
+    user_id: int,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    include_blackboard: bool = True,
+    include_background_markers: bool = True,
+    include_completed: bool = True,
+    include_course_schedule: bool = True,
+) -> List[ScheduleEventSchema]:
+    personal_todos = await load_personal_todos_by_window(
+        db=db,
+        user_id=user_id,
+        start_time=start_time,
+        end_time=end_time,
+        include_blackboard=include_blackboard,
+        include_completed=include_completed,
+    )
+    official_events = await load_official_calendar_events_by_window(
+        db=db,
+        start_time=start_time,
+        end_time=end_time,
+        include_background_markers=include_background_markers,
+    )
+    course_events = []
+    if include_course_schedule:
+        course_events = await list_course_schedule_events(
+            db=db,
+            user_id=user_id,
+            start_time=start_time,
+            end_time=end_time,
+        )
+    return merge_schedule_timeline(personal_todos, official_events, course_events)
+
+
+def detect_time_overlap_conflicts(
+    schedule_events: List[ScheduleEventSchema],
+) -> List[ScheduleConflictSchema]:
+    """
+    V1 overlap analysis only considers blocking items with explicit start/end times.
+    Deadline-only tasks and background markers are excluded because no reliable duration is stored.
+    """
+    ranged_events = [
+        event for event in schedule_events
+        if event.is_blocking and _has_explicit_range(event)
+    ]
+    conflicts: list[ScheduleConflictSchema] = []
+
+    for index, left_event in enumerate(ranged_events):
+        for right_event in ranged_events[index + 1:]:
+            if not (left_event.start_time < right_event.end_time and right_event.start_time < left_event.end_time):
+                continue
+            overlap_start = max(left_event.start_time, right_event.start_time)
+            overlap_end = min(left_event.end_time, right_event.end_time)
+            conflicts.append(
+                ScheduleConflictSchema(
+                    left_event=left_event,
+                    right_event=right_event,
+                    level="high",
+                    reason="两个阻塞型时间段发生重叠",
+                    conflict_type="time_overlap",
+                    overlap_start_time=overlap_start,
+                    overlap_end_time=overlap_end,
+                    is_blocking=True,
+                )
+            )
+
+    return conflicts
+
+
+def detect_deadline_clusters(
+    schedule_events: List[ScheduleEventSchema],
+    same_day_threshold: int = 3,
+    short_window_hours: int = 6,
+    short_window_threshold: int = 2,
+) -> List[SchedulePileupSchema]:
+    """
+    V1 deadline clustering only looks at pending deadline-only personal todos.
+    It groups by calendar day and also flags dense short windows without inventing durations.
+    """
+    deadline_events = sorted(
+        [event for event in schedule_events if _is_pending_deadline_todo(event)],
+        key=lambda item: (item.deadline, item.source_id),
+    )
+    pileups: list[SchedulePileupSchema] = []
+
+    events_by_day: dict[date, list[ScheduleEventSchema]] = {}
+    for event in deadline_events:
+        events_by_day.setdefault(event.deadline.date(), []).append(event)
+
+    for day, events in sorted(events_by_day.items(), key=lambda item: item[0]):
+        if len(events) >= same_day_threshold:
+            pileups.append(
+                SchedulePileupSchema(
+                    start_time=min(item.deadline for item in events),
+                    end_time=max(item.deadline for item in events),
+                    event_count=len(events),
+                    level="high" if len(events) >= same_day_threshold + 1 else "medium",
+                    reason="同一天待完成截止事项过多",
+                    events=events,
+                )
+            )
+
+    for index, left_event in enumerate(deadline_events):
+        window_events = [left_event]
+        for right_event in deadline_events[index + 1:]:
+            hours_apart = (right_event.deadline - left_event.deadline).total_seconds() / 3600
+            if hours_apart > short_window_hours:
+                break
+            window_events.append(right_event)
+
+        if len(window_events) < short_window_threshold:
+            continue
+
+        if any(
+            pileup.start_time == window_events[0].deadline
+            and pileup.end_time == window_events[-1].deadline
+            and pileup.reason == "短时间窗口内待完成截止事项密集"
+            for pileup in pileups
+        ):
+            continue
+
+        if len(window_events) >= short_window_threshold:
+            pileups.append(
+                SchedulePileupSchema(
+                    start_time=window_events[0].deadline,
+                    end_time=window_events[-1].deadline,
+                    event_count=len(window_events),
+                    level="medium",
+                    reason="短时间窗口内待完成截止事项密集",
+                    events=window_events,
+                )
+            )
+
+    return pileups
+
+
+def _is_background_pressure_marker(event: ScheduleEventSchema) -> bool:
+    return (
+        event.source == "official_calendar_event"
+        and event.kind == "background_marker"
+        and event.display_mode == "background"
+    )
+
+
+def _time_window_overlaps(
+    event: ScheduleEventSchema,
+    start_time: datetime | None,
+    end_time: datetime | None,
+) -> bool:
+    if not _has_explicit_range(event) or start_time is None or end_time is None:
+        return False
+    return event.start_time < end_time and start_time < event.end_time
+
+
+def _build_event_key(event: ScheduleEventSchema) -> tuple[str, int]:
+    return (event.source, event.source_id)
+
+
+def _dedupe_related_events(events: List[ScheduleEventSchema]) -> List[ScheduleEventSchema]:
+    deduped: list[ScheduleEventSchema] = []
+    seen: set[tuple[str, int]] = set()
+    for event in events:
+        key = _build_event_key(event)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(event)
+    return deduped
+
+
+def _is_movable_personal_scheduled_event(event: ScheduleEventSchema) -> bool:
+    return (
+        event.source == "personal_todo"
+        and event.kind == "scheduled_todo"
+        and event.is_blocking
+        and event.is_flexible
+        and _has_explicit_range(event)
+        and event.status not in {"done", "cancelled"}
+    )
+
+
+def _get_blocking_events(
+    schedule_events: List[ScheduleEventSchema],
+    exclude_event_keys: set[tuple[str, int]] | None = None,
+) -> List[ScheduleEventSchema]:
+    excluded = exclude_event_keys or set()
+    return [
+        event for event in schedule_events
+        if event.is_blocking
+        and _has_explicit_range(event)
+        and _build_event_key(event) not in excluded
+    ]
+
+
+def _build_day_window(anchor: datetime, start_hour: int = SUGGESTION_DAY_START_HOUR, end_hour: int = SUGGESTION_DAY_END_HOUR) -> tuple[datetime, datetime]:
+    day_start = datetime.combine(anchor.date(), time(start_hour), tzinfo=anchor.tzinfo)
+    day_end = datetime.combine(anchor.date(), time(end_hour), tzinfo=anchor.tzinfo)
+    return day_start, day_end
+
+
+def _collect_overlapping_blocker_ids(
+    start_time: datetime,
+    end_time: datetime,
+    blocking_events: List[ScheduleEventSchema],
+) -> List[int]:
+    blocker_ids: list[int] = []
+    for event in blocking_events:
+        if event.start_time < end_time and start_time < event.end_time:
+            blocker_ids.append(event.source_id)
+    return sorted(set(blocker_ids))
+
+
+def _find_free_windows(
+    blocking_events: List[ScheduleEventSchema],
+    window_start: datetime,
+    window_end: datetime,
+) -> List[tuple[datetime, datetime]]:
+    if window_start >= window_end:
+        return []
+
+    relevant_events = sorted(
+        [
+            event for event in blocking_events
+            if event.start_time < window_end and window_start < event.end_time
+        ],
+        key=lambda item: (item.start_time, item.end_time, item.source, item.source_id),
+    )
+    free_windows: list[tuple[datetime, datetime]] = []
+    cursor = window_start
+    for event in relevant_events:
+        occupied_start = max(window_start, event.start_time)
+        occupied_end = min(window_end, event.end_time)
+        if cursor < occupied_start:
+            free_windows.append((cursor, occupied_start))
+        if occupied_end > cursor:
+            cursor = occupied_end
+    if cursor < window_end:
+        free_windows.append((cursor, window_end))
+    return free_windows
+
+
+def _merge_time_intervals(intervals: List[tuple[datetime, datetime]]) -> List[tuple[datetime, datetime]]:
+    if not intervals:
+        return []
+    merged: list[tuple[datetime, datetime]] = []
+    for start_time, end_time in sorted(intervals, key=lambda item: (item[0], item[1])):
+        if not merged or start_time >= merged[-1][1]:
+            merged.append((start_time, end_time))
+            continue
+        merged[-1] = (merged[-1][0], max(merged[-1][1], end_time))
+    return merged
+
+
+def _calculate_interval_union_hours(events: List[ScheduleEventSchema]) -> float:
+    merged_intervals = _merge_time_intervals(
+        [(event.start_time, event.end_time) for event in events if _has_explicit_range(event)]
+    )
+    return sum(
+        max(0.0, (end_time - start_time).total_seconds() / 3600)
+        for start_time, end_time in merged_intervals
+    )
+
+
+def _build_candidate_reschedule_options(
+    target_event: ScheduleEventSchema,
+    related_blockers: List[ScheduleEventSchema],
+    schedule_events: List[ScheduleEventSchema],
+    max_candidates: int = 3,
+) -> List[ScheduleCandidateRescheduleOptionSchema]:
+    if not _is_movable_personal_scheduled_event(target_event):
+        return []
+
+    duration = target_event.end_time - target_event.start_time
+    blocking_events = _get_blocking_events(
+        schedule_events,
+        exclude_event_keys={_build_event_key(target_event)},
+    )
+    day_offsets = [0, -1, 1]
+    candidates: list[ScheduleCandidateRescheduleOptionSchema] = []
+    seen_slots: set[tuple[datetime, datetime]] = set()
+
+    for day_offset in day_offsets:
+        anchor = target_event.start_time + timedelta(days=day_offset)
+        window_start, window_end = _build_day_window(anchor)
+        free_windows = _find_free_windows(blocking_events, window_start, window_end)
+        for free_start, free_end in free_windows:
+            if free_end - free_start < duration:
+                continue
+            candidate_start = free_start
+            candidate_end = candidate_start + duration
+            slot_key = (candidate_start, candidate_end)
+            if slot_key in seen_slots:
+                continue
+            seen_slots.add(slot_key)
+            candidates.append(
+                ScheduleCandidateRescheduleOptionSchema(
+                    action="reschedule_personal_todo",
+                    target_event_id=target_event.source_id,
+                    suggested_start_time=candidate_start,
+                    suggested_end_time=candidate_end,
+                    reason="避开当前固定阻塞时间段后的可用时间块",
+                    blocked_by_event_ids=sorted({_id for event in related_blockers for _id in [event.source_id]}),
+                    rank=len(candidates) + 1,
+                    confidence="high" if day_offset == 0 else "medium",
+                )
+            )
+            if len(candidates) >= max_candidates:
+                return candidates
+
+    return candidates
+
+
+def _build_candidate_focus_blocks(
+    deadline_events: List[ScheduleEventSchema],
+    pileup: SchedulePileupSchema,
+    schedule_events: List[ScheduleEventSchema],
+    max_candidates: int = 3,
+) -> List[ScheduleCandidateFocusBlockSchema]:
+    if not deadline_events:
+        return []
+
+    earliest_deadline = min(event.deadline for event in deadline_events)
+    target_duration = timedelta(minutes=DEFAULT_FOCUS_BLOCK_MINUTES)
+    blocking_events = _get_blocking_events(schedule_events)
+    candidates: list[ScheduleCandidateFocusBlockSchema] = []
+    seen_slots: set[tuple[datetime, datetime]] = set()
+    day_offsets = [0, -1]
+
+    for day_offset in day_offsets:
+        anchor = earliest_deadline + timedelta(days=day_offset)
+        window_start, window_end = _build_day_window(anchor)
+        window_end = min(window_end, earliest_deadline)
+        if window_end <= window_start:
+            continue
+        free_windows = _find_free_windows(blocking_events, window_start, window_end)
+        for free_start, free_end in sorted(free_windows, key=lambda item: item[1], reverse=True):
+            candidate_end = free_end
+            candidate_start = max(free_start, candidate_end - target_duration)
+            if candidate_end - candidate_start < timedelta(hours=1):
+                continue
+            if candidate_start.hour < SUGGESTION_DAY_START_HOUR:
+                continue
+            slot_key = (candidate_start, candidate_end)
+            if slot_key in seen_slots:
+                continue
+            seen_slots.add(slot_key)
+            candidates.append(
+                ScheduleCandidateFocusBlockSchema(
+                    suggested_start_time=candidate_start,
+                    suggested_end_time=candidate_end,
+                    intended_for_event_ids=sorted({event.source_id for event in deadline_events}),
+                    reason="截止前的可用专注时间块，不与现有阻塞安排重叠",
+                    rank=len(candidates) + 1,
+                    confidence="high" if day_offset == 0 else "medium",
+                )
+            )
+            if len(candidates) >= max_candidates:
+                return candidates
+
+    return candidates
+
+
+def _build_candidate_split_options(
+    target_event: ScheduleEventSchema,
+    schedule_events: List[ScheduleEventSchema],
+    max_candidates: int = 1,
+) -> List[ScheduleCandidateSplitOptionSchema]:
+    if not _is_movable_personal_scheduled_event(target_event):
+        return []
+
+    total_duration = target_event.end_time - target_event.start_time
+    if total_duration < timedelta(hours=4):
+        return []
+
+    blocking_events = _get_blocking_events(
+        schedule_events,
+        exclude_event_keys={_build_event_key(target_event)},
+    )
+    total_duration_minutes = int(total_duration.total_seconds() // 60)
+    candidates: list[ScheduleCandidateSplitOptionSchema] = []
+    day_offsets = [0, -1, 1]
+
+    segments: list[ScheduleCandidateSplitSegmentSchema] = []
+    remaining_duration = total_duration
+    for day_offset in day_offsets:
+        anchor = target_event.start_time + timedelta(days=day_offset)
+        window_start, window_end = _build_day_window(anchor)
+        free_windows = _find_free_windows(blocking_events, window_start, window_end)
+        for free_start, free_end in free_windows:
+            if len(segments) >= 3:
+                break
+            available_duration = free_end - free_start
+            if available_duration < timedelta(minutes=MIN_SPLIT_SEGMENT_MINUTES):
+                continue
+            segment_end = free_start + min(available_duration, remaining_duration)
+            if segment_end - free_start < timedelta(minutes=MIN_SPLIT_SEGMENT_MINUTES):
+                continue
+            segments.append(
+                ScheduleCandidateSplitSegmentSchema(
+                    suggested_start_time=free_start,
+                    suggested_end_time=segment_end,
+                )
+            )
+            remaining_duration -= segment_end - free_start
+            if remaining_duration <= timedelta():
+                candidates.append(
+                    ScheduleCandidateSplitOptionSchema(
+                        action="split_personal_todo",
+                        target_event_id=target_event.source_id,
+                        segments=segments,
+                        total_duration_minutes=total_duration_minutes,
+                        reason="避开课程与固定阻塞时间段，将长任务拆分为更可执行的多个时间块",
+                        rank=1,
+                        confidence="medium",
+                    )
+                )
+                return candidates[:max_candidates]
+
+    return []
+
+
+def detect_daily_scheduled_overload(
+    schedule_events: List[ScheduleEventSchema],
+    daily_hours_threshold: int = 8,
+    daily_item_threshold: int = 6,
+) -> List[SchedulePileupSchema]:
+    """
+    V1 daily overload uses the union of blocking explicit start/end ranges by day.
+    Deadline-only tasks and official background markers do not occupy scheduled hours.
+    When a background marker is active, the daily threshold is reduced slightly to model
+    background pressure without turning the marker itself into scheduled load.
+    """
+    ranged_events = [
+        event for event in schedule_events
+        if event.is_blocking and _has_explicit_range(event)
+    ]
+    background_markers = [
+        event for event in schedule_events
+        if _is_background_pressure_marker(event) and _has_explicit_range(event)
+    ]
+    events_by_day: dict[date, list[ScheduleEventSchema]] = {}
+    for event in ranged_events:
+        events_by_day.setdefault(event.start_time.date(), []).append(event)
+
+    pileups: list[SchedulePileupSchema] = []
+    for day, events in sorted(events_by_day.items(), key=lambda item: item[0]):
+        day_start = datetime.combine(day, time.min, tzinfo=events[0].start_time.tzinfo)
+        day_end = day_start + timedelta(days=1)
+        has_background_pressure = any(
+            _time_window_overlaps(marker, day_start, day_end)
+            for marker in background_markers
+        )
+        effective_hours_threshold = daily_hours_threshold * (0.9 if has_background_pressure else 1.0)
+        effective_item_threshold = daily_item_threshold - 1 if has_background_pressure else daily_item_threshold
+        occupied_hours = _calculate_interval_union_hours(events)
+        if occupied_hours < effective_hours_threshold and len(events) < effective_item_threshold:
+            continue
+
+        reason = f"当日显式阻塞时间段合并后占用约 {round(occupied_hours, 1)} 小时，安排偏满"
+        if has_background_pressure:
+            reason += "；当前处于官方背景提醒周期，建议预留缓冲"
+        pileups.append(
+            SchedulePileupSchema(
+                start_time=min(event.start_time for event in events),
+                end_time=max(event.end_time for event in events),
+                event_count=len(events),
+                level="high" if occupied_hours >= effective_hours_threshold + 2 else "medium",
+                reason=reason,
+                events=sorted(events, key=_build_schedule_sort_key),
+            )
+        )
+
+    return pileups
+
+
+def build_schedule_suggestions(
+    schedule_events: List[ScheduleEventSchema],
+    conflicts: List[ScheduleConflictSchema],
+    pileups: List[SchedulePileupSchema],
+) -> List[ScheduleSuggestionSchema]:
+    """
+    V1 suggestions are deterministic and conservative:
+    move only flexible personal tasks, never official fixed events, and for risky deadlines
+    suggest creating an earlier focus block instead of inventing a reschedule target.
+    """
+    suggestions: list[ScheduleSuggestionSchema] = []
+    suggestion_keys: set[tuple] = set()
+    background_markers = [event for event in schedule_events if _is_background_pressure_marker(event)]
+    deadline_events_by_day: dict[date, list[ScheduleEventSchema]] = {}
+    conflicts_by_personal_event: dict[int, list[ScheduleConflictSchema]] = {}
+    for event in schedule_events:
+        if _is_pending_deadline_todo(event):
+            deadline_events_by_day.setdefault(event.deadline.date(), []).append(event)
+    for conflict in conflicts:
+        for event in (conflict.left_event, conflict.right_event):
+            if _is_movable_personal_scheduled_event(event):
+                conflicts_by_personal_event.setdefault(event.source_id, []).append(conflict)
+
+    for target_event_id, target_conflicts in sorted(conflicts_by_personal_event.items()):
+        all_events = [
+            event
+            for conflict in target_conflicts
+            for event in (conflict.left_event, conflict.right_event)
+        ]
+        target_event = next((event for event in all_events if event.source == "personal_todo" and event.source_id == target_event_id), None)
+        if target_event is None:
+            continue
+        blocking_related_events = [
+            event for event in all_events
+            if _build_event_key(event) != _build_event_key(target_event)
+        ]
+        candidate_reschedule_options = _build_candidate_reschedule_options(
+            target_event=target_event,
+            related_blockers=blocking_related_events,
+            schedule_events=schedule_events,
+        )
+        candidate_split_options = _build_candidate_split_options(
+            target_event=target_event,
+            schedule_events=schedule_events,
+        )
+        key = ("review_personal_conflict", target_event.source_id)
+        if key in suggestion_keys:
+            continue
+        suggestion_keys.add(key)
+        primary_candidate = candidate_reschedule_options[0] if candidate_reschedule_options else None
+        suggestions.append(
+            ScheduleSuggestionSchema(
+                type="review_personal_task_time",
+                level="high",
+                message="个人事项与固定时间段冲突，建议调整个人事项时间块",
+                related_events=_dedupe_related_events([target_event, *blocking_related_events]),
+                suggested_start_time=primary_candidate.suggested_start_time if primary_candidate else None,
+                suggested_end_time=primary_candidate.suggested_end_time if primary_candidate else None,
+                candidate_reschedule_options=candidate_reschedule_options,
+                candidate_split_options=candidate_split_options,
+            )
+        )
+
+    for pileup in pileups:
+        has_background_pressure = any(
+            _time_window_overlaps(marker, pileup.start_time, pileup.end_time)
+            for marker in background_markers
+        )
+        deadline_events = [event for event in pileup.events if _is_pending_deadline_todo(event)]
+        if not deadline_events and pileup.start_time is not None:
+            deadline_events = deadline_events_by_day.get(pileup.start_time.date(), [])
+        if deadline_events:
+            earliest_deadline = min(event.deadline for event in deadline_events)
+            key = ("focus_before_deadline", earliest_deadline, tuple(event.source_id for event in deadline_events))
+            if key not in suggestion_keys:
+                suggestion_keys.add(key)
+                has_course_blockers = any(event.source == "course_schedule_event" for event in pileup.events)
+                candidate_focus_blocks = _build_candidate_focus_blocks(deadline_events, pileup, schedule_events)
+                primary_candidate = candidate_focus_blocks[0] if candidate_focus_blocks else None
+                suggestions.append(
+                    ScheduleSuggestionSchema(
+                        type="create_focus_block",
+                        level=pileup.level,
+                        message="当天固定课程等时间块较满，建议在剩余空档提前创建专注时间块处理截止事项"
+                        if has_course_blockers
+                        else (
+                            "截止事项偏密集，建议提前创建专注时间块处理"
+                            if not has_background_pressure
+                            else "当前处于官方背景提醒周期，建议更早规划截止事项处理时间"
+                        ),
+                        related_events=_dedupe_related_events([*deadline_events, *pileup.events]),
+                        suggested_start_time=primary_candidate.suggested_start_time if primary_candidate else None,
+                        suggested_end_time=primary_candidate.suggested_end_time if primary_candidate else None,
+                        suggested_deadline=earliest_deadline,
+                        candidate_focus_blocks=candidate_focus_blocks,
+                    )
+                )
+            continue
+
+        flexible_personal_events = [
+            event for event in pileup.events
+            if event.source == "personal_todo" and event.is_flexible
+        ]
+        if not flexible_personal_events:
+            continue
+        candidate = sorted(flexible_personal_events, key=lambda item: (item.priority or 0, item.source_id))[0]
+        key = ("rebalance_day", candidate.source_id, pileup.start_time.date() if pileup.start_time else None)
+        if key in suggestion_keys:
+            continue
+        suggestion_keys.add(key)
+        candidate_split_options = _build_candidate_split_options(candidate, schedule_events)
+        if candidate_split_options:
+            suggestions.append(
+                ScheduleSuggestionSchema(
+                    type="split_personal_task",
+                    level=pileup.level,
+                    message="该个人事项时长较长，建议拆分为多个可执行时间块",
+                    related_events=_dedupe_related_events([candidate, *pileup.events]),
+                    candidate_split_options=candidate_split_options,
+                )
+            )
+            continue
+        suggestions.append(
+            ScheduleSuggestionSchema(
+                type="rebalance_personal_schedule",
+                level=pileup.level,
+                message="当日显式时间段过于集中，优先调整个人事项或拆分执行"
+                if not has_background_pressure
+                else "当前处于官方背景提醒周期，避免在这一时段继续堆叠过多个人安排",
+                related_events=[candidate],
+                suggested_start_time=pileup.end_time,
+            )
+        )
+
+    return suggestions
+
+
+def build_schedule_analysis_summary(
+    schedule_events: List[ScheduleEventSchema],
+    conflicts: List[ScheduleConflictSchema],
+    pileups: List[SchedulePileupSchema],
+    suggestions: List[ScheduleSuggestionSchema],
+) -> ScheduleAnalysisSummarySchema:
+    return ScheduleAnalysisSummarySchema(
+        total_events=len(schedule_events),
+        blocking_event_count=sum(1 for event in schedule_events if event.is_blocking),
+        flexible_event_count=sum(1 for event in schedule_events if event.is_flexible),
+        deadline_only_count=sum(1 for event in schedule_events if event.deadline is not None and not _has_explicit_range(event)),
+        conflict_count=len(conflicts),
+        pileup_count=len(pileups),
+        suggestion_count=len(suggestions),
+        risk_level=_calculate_risk_level(conflicts, pileups, suggestions),
+    )
+
+
+def build_schedule_ai_context(
+    summary: ScheduleAnalysisSummarySchema,
+    conflicts: List[ScheduleConflictSchema],
+    pileups: List[SchedulePileupSchema],
+    suggestions: List[ScheduleSuggestionSchema],
+) -> ScheduleAiContextSchema:
+    top_conflicts = [
+        {
+            "type": conflict.conflict_type,
+            "level": conflict.level,
+            "reason": conflict.reason,
+            "left_event_id": conflict.left_event.source_id,
+            "left_event_title": conflict.left_event.title,
+            "right_event_id": conflict.right_event.source_id,
+            "right_event_title": conflict.right_event.title,
+        }
+        for conflict in conflicts[:3]
+    ]
+    top_pileups = [
+        {
+            "level": pileup.level,
+            "reason": pileup.reason,
+            "event_count": pileup.event_count,
+            "event_ids": [event.source_id for event in pileup.events[:5]],
+        }
+        for pileup in pileups[:3]
+    ]
+    top_candidate_actions: list[dict[str, Any]] = []
+    for suggestion in suggestions:
+        for option in suggestion.candidate_reschedule_options[:2]:
+            top_candidate_actions.append(
+                {
+                    "type": "reschedule_option",
+                    "target_event_id": option.target_event_id,
+                    "suggested_start_time": option.suggested_start_time,
+                    "suggested_end_time": option.suggested_end_time,
+                    "reason": option.reason,
+                    "rank": option.rank,
+                }
+            )
+        for option in suggestion.candidate_focus_blocks[:2]:
+            top_candidate_actions.append(
+                {
+                    "type": "focus_block_option",
+                    "intended_for_event_ids": option.intended_for_event_ids,
+                    "suggested_start_time": option.suggested_start_time,
+                    "suggested_end_time": option.suggested_end_time,
+                    "reason": option.reason,
+                    "rank": option.rank,
+                }
+            )
+        for option in suggestion.candidate_split_options[:1]:
+            top_candidate_actions.append(
+                {
+                    "type": "split_option",
+                    "target_event_id": option.target_event_id,
+                    "segment_count": len(option.segments),
+                    "total_duration_minutes": option.total_duration_minutes,
+                    "reason": option.reason,
+                    "rank": option.rank,
+                }
+            )
+        if len(top_candidate_actions) >= 5:
+            break
+
+    return ScheduleAiContextSchema(
+        schedule_risk_summary=f"risk={summary.risk_level}; conflicts={summary.conflict_count}; pileups={summary.pileup_count}; suggestions={summary.suggestion_count}",
+        top_conflicts=top_conflicts,
+        top_pileups=top_pileups,
+        top_candidate_actions=top_candidate_actions[:5],
+    )
+
+
+def analyze_schedule_timeline(
+    schedule_events: List[ScheduleEventSchema],
+) -> dict[str, Any]:
+    """
+    V1 analysis is read-only and deterministic.
+    It only uses explicit time ranges, stored deadlines, and current status fields; it does not estimate missing durations.
+    """
+    sorted_events = sorted(schedule_events, key=_build_schedule_sort_key)
+    conflicts = detect_time_overlap_conflicts(sorted_events)
+    pileups = detect_deadline_clusters(sorted_events)
+    pileups.extend(detect_daily_scheduled_overload(sorted_events))
+    suggestions = build_schedule_suggestions(sorted_events, conflicts, pileups)
+    summary = build_schedule_analysis_summary(sorted_events, conflicts, pileups, suggestions)
+    ai_context = build_schedule_ai_context(summary, conflicts, pileups, suggestions)
+    return {
+        "summary": summary,
+        "conflicts": conflicts,
+        "pileups": pileups,
+        "suggestions": suggestions,
+        "ai_context": ai_context,
+    }
+
+
+async def build_schedule_aggregate_data(
+    db: AsyncSession,
+    user_id: int,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    include_blackboard: bool = True,
+    include_background_markers: bool = True,
+    include_completed: bool = True,
+    include_course_schedule: bool = True,
+) -> ScheduleAggregateData:
+    personal_todos = await load_personal_todos_by_window(
+        db=db,
+        user_id=user_id,
+        start_time=start_time,
+        end_time=end_time,
+        include_blackboard=include_blackboard,
+        include_completed=include_completed,
+    )
+    official_events = await load_official_calendar_events_by_window(
+        db=db,
+        start_time=start_time,
+        end_time=end_time,
+        include_background_markers=include_background_markers,
+    )
+    course_events = []
+    if include_course_schedule:
+        course_events = await list_course_schedule_events(
+            db=db,
+            user_id=user_id,
+            start_time=start_time,
+            end_time=end_time,
+        )
+    schedule_events = merge_schedule_timeline(personal_todos, official_events, course_events)
+    analysis = analyze_schedule_timeline(schedule_events)
+    return ScheduleAggregateData(
+        todos=personal_todos,
+        official_events=official_events,
+        schedule_events=schedule_events,
+        conflicts=analysis["conflicts"],
+        pileups=analysis["pileups"],
+        suggestions=analysis["suggestions"],
+        summary=analysis["summary"],
+        ai_context=analysis["ai_context"],
+    )

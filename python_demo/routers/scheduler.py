@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.db_config import get_db
 from crud.scheduler import (
     build_blackboard_todo_payloads,
+    build_schedule_aggregate_data,
     build_term_label,
     build_course_schedule_payloads,
     build_official_calendar_payloads,
@@ -351,6 +352,50 @@ async def api_list_official_calendar(
     except Exception:
         await db.rollback()
         return Result.error("数据库操作失败")
+
+
+@router.get("/aggregate-analysis")
+async def api_get_schedule_aggregate_analysis(
+    start_time: datetime | None = Query(None),
+    end_time: datetime | None = Query(None),
+    include_blackboard: bool = Query(True),
+    include_background_markers: bool = Query(False),
+    include_completed: bool = Query(False),
+    include_course_schedule: bool = Query(True),
+    db: AsyncSession = Depends(get_db),
+    user_id: int | None = Depends(get_current_user_id),
+):
+    if user_id is None:
+        return Result.error("请先登录")
+
+    try:
+        aggregate = await build_schedule_aggregate_data(
+            db=db,
+            user_id=user_id,
+            start_time=start_time,
+            end_time=end_time,
+            include_blackboard=include_blackboard,
+            include_background_markers=include_background_markers,
+            include_completed=include_completed,
+            include_course_schedule=include_course_schedule,
+        )
+        return Result.success(
+            {
+                "timeline": [item.model_dump(mode="json") for item in aggregate.schedule_events],
+                "analysis": {
+                    "summary": aggregate.summary.model_dump(mode="json"),
+                    "conflicts": [item.model_dump(mode="json") for item in aggregate.conflicts],
+                    "pileups": [item.model_dump(mode="json") for item in aggregate.pileups],
+                    "suggestions": [item.model_dump(mode="json") for item in aggregate.suggestions],
+                    "ai_context": aggregate.ai_context.model_dump(mode="json"),
+                },
+            }
+        )
+    except Exception as error:
+        await db.rollback()
+        print("aggregate analysis Exception:", repr(error))
+        traceback.print_exc()
+        return Result.error(f"数据库操作失败: {error}")
 
 
 @router.post("/course-schedule/import")
