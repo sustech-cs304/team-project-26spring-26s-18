@@ -86,3 +86,19 @@ export function getCourseScheduleList(params = {}) {
 export function getBlackboardList() {
   return request('/scheduler/blackboard/list')
 }
+
+export function getScheduleAggregateAnalysis(params = {}) {
+  const query = new URLSearchParams()
+  if (params.start_time) query.set('start_time', params.start_time)
+  if (params.end_time) query.set('end_time', params.end_time)
+  if (params.include_blackboard !== undefined) query.set('include_blackboard', String(params.include_blackboard))
+  if (params.include_background_markers !== undefined) {
+    query.set('include_background_markers', String(params.include_background_markers))
+  }
+  if (params.include_completed !== undefined) query.set('include_completed', String(params.include_completed))
+  if (params.include_course_schedule !== undefined) {
+    query.set('include_course_schedule', String(params.include_course_schedule))
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return request(`/scheduler/aggregate-analysis${suffix}`)
+}
