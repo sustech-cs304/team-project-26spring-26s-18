@@ -24,6 +24,157 @@
       </div>
     </div>
 
+    <section class="analysis-panel">
+      <div class="analysis-panel-top">
+        <div>
+          <div class="analysis-eyebrow">Schedule Analysis</div>
+          <h3>优化方案提出与选择</h3>
+        </div>
+        <button class="analysis-trigger" :disabled="analysisBusy" @click="emit('run-analysis')">
+          {{ analysisTriggerLabel }}
+        </button>
+      </div>
+
+      <div class="analysis-card">
+        <div class="analysis-card-title">数据来源</div>
+        <div class="analysis-source-overview">
+          <div class="analysis-metric">
+            <span>分析范围</span>
+            <strong>{{ dataSourceSummary.rangeLabel || '当前视图' }}</strong>
+          </div>
+          <div class="analysis-metric">
+            <span>待办总量</span>
+            <strong>{{ dataSourceSummary.totalTodoCount || 0 }}</strong>
+          </div>
+          <div class="analysis-metric">
+            <span>未完成个人事项</span>
+            <strong>{{ dataSourceSummary.pendingTodoCount || 0 }}</strong>
+          </div>
+        </div>
+        <div class="analysis-source-list">
+          <div
+            v-for="source in dataSourceSummary.includedSources || []"
+            :key="source.key"
+            class="analysis-source-item"
+          >
+            <strong>{{ source.label }}</strong>
+            <span>{{ source.count }} 条</span>
+            <small>{{ source.detail }}</small>
+          </div>
+        </div>
+        <div class="analysis-helper">
+          分析基于已导入的课程表、校历和 Blackboard 数据；日历显示开关不会改变分析结果。
+        </div>
+      </div>
+
+      <template v-if="analysisVisible">
+        <div v-if="analysisError" class="analysis-card analysis-card-error">
+          {{ analysisError }}
+        </div>
+
+        <template v-else-if="analysisLoading">
+          <div class="analysis-card analysis-card-loading">正在聚合当前周的日程、课程和截止事项...</div>
+        </template>
+
+        <template v-else-if="analysisData">
+          <div class="analysis-card">
+            <div class="analysis-card-title">检测结果</div>
+            <div class="analysis-metric-list">
+              <div class="analysis-metric">
+                <span>风险等级</span>
+                <strong>{{ riskLabel }}</strong>
+              </div>
+              <div class="analysis-metric">
+                <span>时间冲突</span>
+                <strong>{{ summary.conflict_count || 0 }}</strong>
+              </div>
+              <div class="analysis-metric">
+                <span>堆积时段</span>
+                <strong>{{ summary.pileup_count || 0 }}</strong>
+              </div>
+              <div class="analysis-metric">
+                <span>候选建议</span>
+                <strong>{{ summary.suggestion_count || 0 }}</strong>
+              </div>
+            </div>
+            <div v-if="topInsights.length" class="analysis-insight-list">
+              <div
+                v-for="item in topInsights"
+                :key="item.key"
+                class="analysis-insight-item"
+              >
+                <strong>{{ item.label }}</strong>
+                <span>{{ item.text }}</span>
+              </div>
+            </div>
+            <div v-else class="analysis-empty">
+              当前范围内没有明显冲突或堆积，整体安排较平稳。
+            </div>
+          </div>
+
+          <div class="analysis-card">
+            <div class="analysis-card-title">AI 候选优化方案（当前分析参考）</div>
+            <div class="analysis-helper">
+              候选方案基于 aggregate-analysis 的结构化结果由 AI 生成。选择后会在周历上预览建议调整，但不会保存到后端，也不会直接改写当前 Todo。
+            </div>
+            <div v-if="planGenerationLoading" class="analysis-card-loading">
+              正在根据检测结果生成可执行优化方案...
+            </div>
+            <div v-else-if="planGenerationError" class="analysis-empty">
+              {{ planGenerationError }}
+            </div>
+            <div v-else-if="candidatePlans.length" class="plan-list">
+              <article
+                v-for="plan in candidatePlans"
+                :key="plan.id"
+                class="plan-card"
+                :class="{ selected: selectedPlanId === plan.id }"
+                @click="selectPlan(plan)"
+              >
+                <div class="plan-card-head">
+                  <div>
+                    <strong>{{ plan.name }}</strong>
+                    <div class="plan-subtitle">优先目标：{{ plan.goal }}</div>
+                  </div>
+                  <div class="plan-badges">
+                    <span class="plan-badge">{{ plan.adjustmentCount }} 项调整</span>
+                    <span class="plan-badge ai">AI 生成</span>
+                  </div>
+                </div>
+                <p class="plan-reason">{{ plan.summary }}</p>
+                <div class="plan-action-list">
+                  <div
+                    v-for="item in plan.adjustments"
+                    :key="item.key"
+                    class="plan-action-item"
+                  >
+                    <strong>{{ item.itemTitle }}</strong>
+                    <span class="plan-timing">{{ item.currentTime }} → {{ item.suggestedTime }}</span>
+                    <small>原因：{{ item.reason }}</small>
+                    <small>预期效果：{{ item.expectedEffect }}</small>
+                  </div>
+                </div>
+                <button
+                  class="plan-select-btn"
+                  :class="{ selected: selectedPlanId === plan.id }"
+                  @click.stop="selectPlan(plan)"
+                >
+                  {{ selectedPlanId === plan.id ? '取消日历预览' : '在周历中预览此方案' }}
+                </button>
+              </article>
+            </div>
+            <div v-else class="analysis-empty">
+              当前分析尚未生成 AI 候选方案。
+            </div>
+          </div>
+        </template>
+
+        <div v-else class="analysis-card analysis-empty-state">
+          点击 “Analyze My Schedule” 后，将基于当前 Todo、课程表、校历和 Blackboard 数据生成优化建议。
+        </div>
+      </template>
+    </section>
+
     <div class="confirmation-card">
       <div class="card-title">待确认操作</div>
       <template v-if="previewAction">
@@ -153,9 +304,45 @@ const props = defineProps({
     type: Object,
     default: null,
   },
+  aggregateAnalysis: {
+    type: Object,
+    default: null,
+  },
+  analysisLoading: {
+    type: Boolean,
+    default: false,
+  },
+  planGenerationLoading: {
+    type: Boolean,
+    default: false,
+  },
+  analysisError: {
+    type: String,
+    default: '',
+  },
+  planGenerationError: {
+    type: String,
+    default: '',
+  },
+  analysisVisible: {
+    type: Boolean,
+    default: false,
+  },
+  dataSourceSummary: {
+    type: Object,
+    default: () => ({}),
+  },
+  aiCandidatePlans: {
+    type: Array,
+    default: () => [],
+  },
+  selectedPlanId: {
+    type: String,
+    default: '',
+  },
 })
 
-const emit = defineEmits(['confirm-action'])
+const emit = defineEmits(['confirm-action', 'run-analysis', 'select-plan'])
 const userStore = useUserStore()
 
 const draft = ref('')
@@ -177,6 +364,67 @@ const messages = ref([
 
 const confirmDisabled = computed(() => {
   return props.confirming || !previewAction.value?.canConfirm
+})
+
+const analysisBusy = computed(() => {
+  return props.analysisLoading || props.planGenerationLoading
+})
+
+const analysisTriggerLabel = computed(() => {
+  if (props.analysisLoading) return '分析中...'
+  if (props.planGenerationLoading) return '生成方案中...'
+  return 'Analyze My Schedule'
+})
+
+const analysisData = computed(() => props.aggregateAnalysis?.analysis || null)
+
+const summary = computed(() => analysisData.value?.summary || {})
+
+const riskLabel = computed(() => {
+  const risk = summary.value?.risk_level
+  if (risk === 'high') return '高风险'
+  if (risk === 'medium') return '中风险'
+  return '低风险'
+})
+
+const topInsights = computed(() => {
+  const analysis = analysisData.value
+  if (!analysis) return []
+
+  const conflictItems = (analysis.conflicts || []).slice(0, 2).map((item, index) => ({
+    key: `conflict-${index}`,
+    label: '时间冲突',
+    text: `${item.left_event?.title || '事项'} 与 ${item.right_event?.title || '事项'} 重叠`,
+  }))
+  const pileupItems = (analysis.pileups || []).slice(0, 2).map((item, index) => ({
+    key: `pileup-${index}`,
+    label: '堆积提醒',
+    text: item.reason || `发现 ${item.event_count || 0} 个集中事项`,
+  }))
+
+  return [...conflictItems, ...pileupItems].slice(0, 4)
+})
+
+const candidatePlans = computed(() => {
+  return props.aiCandidatePlans.map((plan, planIndex) => ({
+    ...plan,
+    id: String(plan.id || `plan-${planIndex + 1}`),
+    name: plan.name || `方案 ${planIndex + 1}`,
+    goal: plan.goal || '待补充',
+    summary: plan.summary || '',
+    adjustmentCount: Array.isArray(plan.adjustments) ? plan.adjustments.length : 0,
+    adjustments: Array.isArray(plan.adjustments)
+      ? plan.adjustments.map((item, itemIndex) => ({
+        ...item,
+        key: `${plan.id || planIndex}-${itemIndex}`,
+        itemTitle: item.item_title || '未命名事项',
+        currentTime: item.current_time || '未提供时间',
+        suggestedTime: item.suggested_time || '未提供时间',
+        reason: item.reason || '未提供原因',
+        expectedEffect: item.expected_effect || '未提供预期效果',
+      }))
+      : [],
+  }))
 })
 
 watch(
@@ -708,6 +956,15 @@ function clearPreview() {
   previewAction.value = null
 }
 
+function selectPlan(plan) {
+  if (props.selectedPlanId && props.selectedPlanId === plan?.id) {
+    emit('select-plan', null)
+    return
+  }
+
+  emit('select-plan', plan)
+}
+
 function confirmAction() {
   if (!previewAction.value) {
     ElMessage.error('当前没有可确认的操作草案')
@@ -770,6 +1027,223 @@ function confirmAction() {
   gap: 14px;
   margin-bottom: 18px;
   padding-right: 4px;
+}
+
+.analysis-panel {
+  margin-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.analysis-panel-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.analysis-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #8eb6d8;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.analysis-panel-top h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #f1f7fc;
+}
+
+.analysis-trigger {
+  border: none;
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: #d8ebff;
+  color: #12304d;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.analysis-trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.analysis-card {
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.analysis-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f4f8fc;
+  margin-bottom: 12px;
+}
+
+.analysis-helper {
+  margin-bottom: 12px;
+  color: #c6daea;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.analysis-card-error {
+  color: #ffd6d1;
+  background: rgba(200, 64, 39, 0.22);
+}
+
+.analysis-card-loading,
+.analysis-empty-state,
+.analysis-empty {
+  color: #c9dcee;
+  line-height: 1.5;
+}
+
+.analysis-source-overview,
+.analysis-metric-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.analysis-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.analysis-metric span {
+  font-size: 12px;
+  color: #9ec2de;
+}
+
+.analysis-metric strong {
+  font-size: 16px;
+  color: #f5fbff;
+}
+
+.analysis-source-list,
+.analysis-insight-list,
+.plan-action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.analysis-source-item,
+.analysis-insight-item,
+.plan-action-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.analysis-source-item span,
+.analysis-insight-item span,
+.plan-action-item span,
+.analysis-source-item small {
+  color: #c6daea;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.plan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.plan-card {
+  border-radius: 16px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.plan-card.selected {
+  border-color: #8fc0ea;
+  background: rgba(143, 192, 234, 0.14);
+}
+
+.plan-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.plan-subtitle {
+  margin-top: 4px;
+  color: #b9d3e8;
+  font-size: 12px;
+}
+
+.plan-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.plan-badge {
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #dceaf6;
+}
+
+.plan-badge.risk {
+  background: rgba(161, 208, 250, 0.14);
+}
+
+.plan-badge.ai {
+  background: rgba(106, 214, 181, 0.14);
+}
+
+.plan-reason {
+  margin: 0 0 10px;
+  color: #d8e7f3;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.plan-timing {
+  color: #d8e7f3;
+}
+
+.plan-action-item small {
+  color: #c6daea;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.plan-select-btn {
+  margin-top: 10px;
+  border: none;
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f1f8ff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.plan-select-btn.selected {
+  background: #d7ebff;
+  color: #12304d;
 }
 
 .message-row {
@@ -935,6 +1409,17 @@ function confirmAction() {
 @media (max-width: 960px) {
   .todo-ai-panel {
     min-height: 640px;
+  }
+
+  .analysis-source-overview,
+  .analysis-metric-list {
+    grid-template-columns: 1fr;
+  }
+
+  .analysis-panel-top,
+  .plan-card-head {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>
