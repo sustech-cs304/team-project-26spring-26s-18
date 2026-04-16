@@ -7,6 +7,14 @@ on:
       - "vue/**"
       - "python_demo/**"
       - ".github/workflows/**"
+
+  push:
+    branches: ["main"]
+    paths:
+      - "vue/**"
+      - "python_demo/**"
+      - ".github/workflows/**"
+
   workflow_dispatch:
 
 permissions:
@@ -32,7 +40,8 @@ jobs:
 
       - name: Install frontend deps
         run: npm ci
-
+      - name: Lint frontend
+        run: npm run lint
       - name: Build frontend
         run: npm run build
 
