@@ -93,6 +93,31 @@
                   </div>
                   <div class="event-title">{{ segment.todo.title }}</div>
                 </div>
+
+                <div
+                  v-for="segment in getPreviewsForDay(day.iso)"
+                  :key="`preview-${segment.preview.id}-${day.iso}-${segment.segmentStartMinutes}-${segment.segmentEndMinutes}`"
+                  class="todo-event todo-preview-event"
+                  :class="[
+                    previewTypeClass(segment.preview.preview_type),
+                    {
+                      'is-range': isRangeEvent(segment),
+                      'is-multi-day-range': isMultiDayRangeSegment(segment),
+                      'is-long': isLongSegment(segment),
+                      'is-all-day-like': isAllDayLikeSegment(segment),
+                      'is-narrow': isNarrowSegment(segment),
+                    },
+                  ]"
+                  :style="getPreviewStyle(segment)"
+                  :title="formatPreviewTooltip(segment.preview)"
+                  @click.stop
+                >
+                  <div class="event-meta-row preview-meta-row">
+                    <div v-if="shouldShowTime(segment)" class="event-time">{{ formatTime(segment) }}</div>
+                    <span class="preview-chip">{{ segment.preview.preview_label || 'AI Preview' }}</span>
+                  </div>
+                  <div class="event-title">{{ segment.preview.item_title }}</div>
+                </div>
               </div>
             </div>
           </div>
@@ -123,6 +148,10 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  aiPreviewAdjustments: {
+    type: Array,
+    default: () => [],
+  },
 })
 
 const emit = defineEmits(['change-week', 'open-add', 'select-event', 'create-at-slot'])
@@ -136,11 +165,15 @@ const ALL_DAY_LIKE_MINUTES = 23 * 60
 const DEADLINE_MIN_HEIGHT = 56
 const hourLabels = Array.from({ length: 24 }, (_, index) => `${String(index).padStart(2, '0')}:00`)
 const eventSegments = computed(() => props.events.flatMap((item) => splitTodoIntoDaySegments(item)))
+const previewSegments = computed(() => props.aiPreviewAdjustments.flatMap((item) => buildPreviewSegments(item)))
 const dayBackgroundMarkers = computed(() => {
   return Object.fromEntries(props.weekDays.map((day) => [day.iso, buildDayBackgroundMarkers(day.iso)]))
 })
 const dayEventLayouts = computed(() => {
-  return Object.fromEntries(props.weekDays.map((day) => [day.iso, buildDayEventLayout(day.iso)]))
+  return Object.fromEntries(props.weekDays.map((day) => [day.iso, buildDayLayout(day.iso, eventSegments.value)]))
+})
+const dayPreviewLayouts = computed(() => {
+  return Object.fromEntries(props.weekDays.map((day) => [day.iso, buildDayLayout(day.iso, previewSegments.value)]))
 })
 const scrollbarOffset = ref(0)
 const headerRowStyle = computed(() => ({
@@ -177,6 +210,10 @@ function getBackgroundMarkersForDay(dayIso) {
   return dayBackgroundMarkers.value[dayIso] || []
 }
 
+function getPreviewsForDay(dayIso) {
+  return dayPreviewLayouts.value[dayIso] || []
+}
+
 function handleDayColumnClick(dayIso, event) {
   const columnRect = event.currentTarget?.getBoundingClientRect()
   if (!columnRect) return
@@ -196,8 +233,24 @@ function handleDayColumnClick(dayIso, event) {
   })
 }
 
-function buildDayEventLayout(dayIso) {
-  const daySegments = eventSegments.value
+function buildPreviewSegments(preview) {
+  const hasRange = Boolean(preview?.suggested_end && preview?.suggested_start && preview.suggested_end > preview.suggested_start)
+  const previewTodo = {
+    id: `preview-${preview?.id || preview?.item_title || 'slot'}`,
+    title: preview?.item_title || 'AI Preview',
+    start_time: hasRange ? preview.suggested_start : '',
+    end_time: hasRange ? preview.suggested_end : '',
+    deadline: hasRange ? '' : preview?.suggested_start || '',
+  }
+
+  return splitTodoIntoDaySegments(previewTodo).map((segment) => ({
+    ...segment,
+    preview,
+  }))
+}
+
+function buildDayLayout(dayIso, sourceSegments = []) {
+  const daySegments = sourceSegments
     .filter((segment) => segment.dayKey === dayIso)
     .sort((a, b) => {
       if (a.segmentStartMinutes !== b.segmentStartMinutes) {
@@ -311,9 +364,10 @@ function getEventStyle(segment) {
   const isRange = isRangeEvent(segment)
 
   if (!isRange) {
+    const blockHeight = Math.max(DEADLINE_MIN_HEIGHT, height)
     return {
-      top: `${top}px`,
-      height: `${Math.max(DEADLINE_MIN_HEIGHT, height)}px`,
+      top: `${top - blockHeight}px`,
+      height: `${blockHeight}px`,
       left: `${SIDE_PADDING}px`,
       width: `calc(100% - ${SIDE_PADDING * 2}px)`,
       right: 'auto',
@@ -341,6 +395,13 @@ function getEventStyle(segment) {
     width: trackWidth,
     right: 'auto',
     zIndex: usesSoftVisualStyle ? 1 : 3,
+  }
+}
+
+function getPreviewStyle(segment) {
+  return {
+    ...getEventStyle(segment),
+    zIndex: 6,
   }
 }
 
@@ -399,6 +460,22 @@ function priorityClass(priority) {
   if (priority === 3) return 'is-high'
   if (priority === 1) return 'is-low'
   return 'is-medium'
+}
+
+function previewTypeClass(previewType) {
+  if (previewType === 'move') return 'is-preview-move'
+  if (previewType === 'split') return 'is-preview-split'
+  if (previewType === 'focus_block') return 'is-preview-focus'
+  return 'is-preview-reschedule'
+}
+
+function formatPreviewTooltip(preview) {
+  return [
+    preview?.item_title || 'AI Preview',
+    `当前时间：${preview?.current_time || '未提供'}`,
+    `建议时间：${preview?.suggested_time || '未提供'}`,
+    `原因：${preview?.reason || '未提供'}`,
+  ].join('\n')
 }
 
 function statusClass(status) {
@@ -631,6 +708,56 @@ function statusClass(status) {
   box-shadow: 0 14px 28px rgba(40, 70, 110, 0.16);
 }
 
+.todo-preview-event {
+  --preview-accent: rgba(86, 88, 99, 0.72);
+  --preview-shadow: rgba(95, 88, 126, 0.08);
+  --preview-text: #5d5770;
+  --preview-fill-start: rgba(247, 243, 255, 0.8);
+  --preview-fill-end: rgba(237, 231, 250, 0.7);
+  border-width: 1px;
+  border-style: dashed;
+  border-color: var(--preview-accent);
+  background: linear-gradient(135deg, var(--preview-fill-start) 0%, var(--preview-fill-end) 100%);
+  color: var(--preview-text);
+  box-shadow: 0 10px 20px var(--preview-shadow);
+  opacity: 0.86;
+}
+
+.todo-preview-event:hover {
+  transform: translateY(4px);
+  box-shadow: 0 12px 24px rgba(95, 88, 126, 0.1);
+}
+
+.todo-preview-event .event-time {
+  color: inherit;
+  opacity: 0.76;
+}
+
+.preview-meta-row {
+  margin-bottom: 6px;
+}
+
+.preview-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  min-width: 0;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(250, 248, 255, 0.82);
+  color: var(--preview-text);
+  border: 1px dashed rgba(86, 88, 99, 0.44);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 0 auto;
+}
+
 .todo-event.is-range {
   padding-bottom: 14px;
 }
@@ -654,6 +781,14 @@ function statusClass(status) {
 .todo-event.is-multi-day-range.is-all-day-like {
   box-shadow: 0 8px 18px rgba(40, 70, 110, 0.08);
   opacity: 0.8;
+}
+
+.todo-preview-event.is-long,
+.todo-preview-event.is-multi-day-range,
+.todo-preview-event.is-all-day-like,
+.todo-preview-event.is-multi-day-range.is-all-day-like {
+  box-shadow: 0 10px 20px var(--preview-shadow);
+  opacity: 0.96;
 }
 
 .todo-event.is-narrow {
@@ -720,6 +855,12 @@ function statusClass(status) {
 
 .todo-event.is-narrow .event-meta-row {
   margin-bottom: 4px;
+}
+
+.todo-preview-event.is-narrow .preview-chip {
+  height: 17px;
+  padding: 0 6px;
+  font-size: 9px;
 }
 
 .todo-event.is-narrow .event-time {
