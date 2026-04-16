@@ -1388,7 +1388,7 @@ async def load_personal_todos_by_window(
         )
 
     if not include_completed:
-        stmt = stmt.where(PersonalTodo.status.not_in(["done", "cancelled"]))
+        stmt = stmt.where(PersonalTodo.status != "done")
 
     scheduled_overlap_clauses = []
     if start_time is not None:
