@@ -73,6 +73,34 @@
         </div>
       </div>
       
+      <!-- 模式选择区域 -->
+      <div class="mode-selector">
+        <span class="mode-label">模式选择：</span>
+        <div class="mode-options">
+          <button 
+            class="mode-btn" 
+            :class="{ active: selectedMode === 'default' }" 
+            @click="selectedMode = 'default'"
+          >
+            默认模式
+          </button>
+          <button 
+            class="mode-btn" 
+            :class="{ active: selectedMode === 'campus' }" 
+            @click="selectedMode = 'campus'"
+          >
+            校园助手
+          </button>
+          <button 
+            class="mode-btn" 
+            :class="{ active: selectedMode === 'learning' }" 
+            @click="selectedMode = 'learning'"
+          >
+            学习助手
+          </button>
+        </div>
+      </div>
+      
       <!-- 输入框区域 -->
       <div class="chat-input-area">
         <div class="input-container">
@@ -123,6 +151,7 @@ const loading = ref(false)
 const chatContentRef = ref(null)
 const fileInput = ref(null)
 const selectedFiles = ref([])
+const selectedMode = ref('default') // 默认模式
 // 解析Markdown文本
 function renderMarkdown(mdText) {
   return marked.parse(mdText)
@@ -307,30 +336,83 @@ async function sendMessage() {
     // 输出实际传输的内容
     console.log('发送给后端的消息数据:', requestData)
     
-    const aiResponse = await fetch(`http://${ip}/session/aicontent`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'token': userStore.token
-      },
-      body: JSON.stringify(requestData)
-    })
+    // 先添加用户消息到界面
+    const userMessage = {
+      id: Date.now(),
+      role: 'user',
+      content: messageContent,
+      content_type: 'text',
+      created_at: new Date().toISOString()
+    }
+    messages.value.push(userMessage)
+    scrollToBottom()
     
-    if (aiResponse.ok) {
-      const aiResult = await aiResponse.json()
-      if (aiResult && aiResult.data) {
-        const newMessages = aiResult.data
+    // 添加一个空的AI消息占位符，用于实时更新内容
+    const aiMessageId = Date.now() + 1
+    const aiMessage = {
+      id: aiMessageId,
+      role: 'assistant',
+      content: '',
+      content_type: 'text',
+      created_at: new Date().toISOString()
+    }
+    messages.value.push(aiMessage)
+    scrollToBottom()
+    
+    try {
+      // 根据选择的模式确定接口URL
+      let apiUrl = ''
+      switch (selectedMode.value) {
+        case 'campus':
+          apiUrl = `/session/aicontent/stream_less_history_more_rag`
+          break
+        case 'learning':
+          apiUrl = `/session/aicontent/stream_more_history_no_rag`
+          break
+        default:
+          apiUrl = `/session/aicontent/stream`
+      }
+      
+      const aiResponse = await fetch(`http://${ip}${apiUrl}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'token': userStore.token
+        },
+        body: JSON.stringify(requestData)
+      })
+      
+      if (aiResponse.ok) {
+        const reader = aiResponse.body.getReader()
+        const decoder = new TextDecoder()
         
-        // 清空当前消息列表并添加新消息
-        messages.value = [...messages.value, ...newMessages]
-        scrollToBottom()
+        let accumulatedContent = ''
+        
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          
+          const chunk = decoder.decode(value, { stream: true })
+          accumulatedContent += chunk
+          
+          // 更新AI消息内容
+          const aiMessageIndex = messages.value.findIndex(msg => msg.id === aiMessageId)
+          if (aiMessageIndex !== -1) {
+            messages.value[aiMessageIndex].content = accumulatedContent
+            scrollToBottom()
+          }
+        }
+        
+        // 流式传输完成
+        console.log('流式传输完成')
         
         // 清空文件列表
         selectedFiles.value = []
       } else {
-        console.log(aiResult)
-        console.error('无效的API响应格式')
+        console.error('API请求失败:', aiResponse.status)
       }
+    } catch (error) {
+      console.error('流式请求失败:', error)
     }
   } catch (error) {
     console.error('发送消息失败:', error)
@@ -606,6 +688,49 @@ onMounted(() => {
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+/* 模式选择区域 */
+.mode-selector {
+  padding: 12px 20px;
+  border-top: 1px solid #e0e0e0;
+  background-color: white;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mode-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #666;
+}
+
+.mode-options {
+  display: flex;
+  gap: 8px;
+}
+
+.mode-btn {
+  padding: 6px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 16px;
+  background-color: white;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.mode-btn:hover {
+  background-color: #f5f5f5;
+  border-color: #2196f3;
+}
+
+.mode-btn.active {
+  background-color: #e3f2fd;
+  border-color: #2196f3;
+  color: #1976d2;
+  font-weight: 500;
 }
 
 /* 输入框区域 */

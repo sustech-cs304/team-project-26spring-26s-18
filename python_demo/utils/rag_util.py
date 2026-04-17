@@ -1,4 +1,5 @@
 from typing import List, Dict, Any
+import time
 import os
 import requests
 from pathlib import Path
@@ -7,7 +8,12 @@ from io import BytesIO
 from pypdf import PdfReader
 from docx import Document
 from pptx import Presentation
+
 load_dotenv()
+# 为解决部分文件无法正确上传问题
+def clean_text(text: str) -> str:
+    """去除所有非法的 surrogate 字符，保证能被utf-8编码"""
+    return text.encode("utf-8", "ignore").decode("utf-8", "ignore")
 
 # 向量化服务,调用第三方API进行文本向量化
 import dashscope
@@ -19,13 +25,16 @@ class EmbeddingService:
         if not self.api_key:
             raise ValueError("请设置环境变量 DASHSCOPE_API_KEY")
         dashscope.api_key = self.api_key
-        self.model = "text-embedding-v1"
+        self.model = "text-embedding-v2"
         self.dimension = 768
         print(f"Embedding模型: {self.model}")
     
     def embed(self, text: str) -> List[float]:
         try:
+            t0 = time.time()
             resp = TextEmbedding.call(model=self.model, input=text)
+            t1 = time.time()
+            print(f"[EmbeddingService.embed] 单条embedding耗时: {t1-t0:.2f}s")
             if resp.status_code == 200:
                 return resp.output['embeddings'][0]['embedding']
             else:
@@ -36,7 +45,11 @@ class EmbeddingService:
             return [0.0] * self.dimension
     
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        return [self.embed(text) for text in texts]
+        t0 = time.time()
+        result = [self.embed(text) for text in texts]
+        t1 = time.time()
+        print(f"[EmbeddingService.embed_batch] 批量embedding {len(texts)} 条耗时: {t1-t0:.2f}s")
+        return result
 
 
 # 向量数据库，用来存储和检索文档块的向量表示
@@ -62,18 +75,23 @@ class VectorStore:
             print(f"新建向量数据库 collection: {collection_name}")
     
     def add_chunks(self, chunks: List[Dict[str, Any]], embeddings: List[List[float]]):
+        t0 = time.time()
         ids = [f"{chunk['source']}_{chunk['chunk_id']}" for chunk in chunks]
         documents = [chunk['content'] for chunk in chunks]
         metadatas = [{"source": chunk['source']} for chunk in chunks]
         self.collection.add(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
-        print(f"已添加 {len(chunks)} 个文档块")
+        t1 = time.time()
+        print(f"[VectorStore.add_chunks] 添加 {len(chunks)} 个文档块耗时: {t1-t0:.2f}s")
     
     def search(self, query_embedding: List[float], top_k: int = 5) -> List[Dict[str, Any]]:
+        t0 = time.time()
         results = self.collection.query(
             query_embeddings=[query_embedding],
             n_results=top_k,
             include=["documents", "metadatas", "distances"]
         )
+        t1 = time.time()
+        print(f"[VectorStore.search] 检索 top{top_k} 耗时: {t1-t0:.2f}s")
         retrieved = []
         for i in range(len(results['documents'][0])):
             retrieved.append({
@@ -97,7 +115,7 @@ class Reranker:
     def rerank(self, query: str, candidates: List[Dict[str, Any]], top_k: int = 3) -> List[Dict[str, Any]]:
         if not candidates:
             return []
-        
+        t0 = time.time()
         documents = [cand['content'] for cand in candidates]
         payload = {
             "model": self.model,
@@ -105,9 +123,10 @@ class Reranker:
             "parameters": {"return_documents": True, "top_n": top_k}
         }
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        
         try:
             response = requests.post(self.url, headers=headers, json=payload)
+            t1 = time.time()
+            print(f"[Reranker.rerank] 重排序 top{top_k} 耗时: {t1-t0:.2f}s")
             if response.status_code == 200:
                 result = response.json()
                 reranked = []
@@ -154,7 +173,9 @@ def store_document(files: List[str], file_types: List[str], file_names: List[str
     vector_store = VectorStore()
     total_chunks = 0
 
+    t_all = time.time()
     for idx, content in enumerate(files):
+        t_file = time.time()
         filename = file_names[idx]
         file_type = file_types[idx]
         text = ""
@@ -187,12 +208,30 @@ def store_document(files: List[str], file_types: List[str], file_names: List[str
             print(f"暂不支持的文件类型: {file_type}, 按文本处理")
             text = content.decode("utf-8", errors="ignore") if isinstance(content, bytes) else content
 
+        # 清洗非法unicode字符，防止后续存储报错
+        text = clean_text(text)
+
         chunks = split_into_chunks(text, chunk_size=chunk_size)
+        if not chunks:
+            print(f"警告: 文件 {filename} 解析后无有效内容，已跳过。")
+            continue
         chunk_dicts = [
             {"content": chunk, "source": filename, "chunk_id": i}
             for i, chunk in enumerate(chunks)
         ]
-        embeddings = embedding_service.embed_batch([c["content"] for c in chunk_dicts])
+        contents = [c["content"] for c in chunk_dicts]
+        t_emb = time.time()
+        embeddings = embedding_service.embed_batch(contents)
+        t_emb2 = time.time()
+        print(f"[store_document] 文件 {filename} embedding耗时: {t_emb2-t_emb:.2f}s")
+        # 检查embedding是否为空或长度不一致
+        if not embeddings or len(embeddings) != len(chunk_dicts):
+            print(f"警告: 文件 {filename} embedding 失败，已跳过。")
+            continue
+        t_add = time.time()
         vector_store.add_chunks(chunk_dicts, embeddings)
+        t_add2 = time.time()
+        print(f"[store_document] 文件 {filename} add_chunks耗时: {t_add2-t_add:.2f}s")
         total_chunks += len(chunk_dicts)
-    print(f"所有文件处理完成，总计分块数: {total_chunks}")
+        print(f"[store_document] 文件 {filename} 总处理耗时: {t_add2-t_file:.2f}s")
+    print(f"所有文件处理完成，总计分块数: {total_chunks}，总耗时: {time.time()-t_all:.2f}s")
