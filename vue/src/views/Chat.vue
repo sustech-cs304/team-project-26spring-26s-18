@@ -98,6 +98,13 @@
           >
             学习助手
           </button>
+          <button 
+            class="mode-btn" 
+            :class="{ active: selectedMode === 'recommend' }" 
+            @click="selectedMode = 'recommend'"
+          >
+            推荐模式
+          </button>
         </div>
       </div>
       
@@ -368,6 +375,9 @@ async function sendMessage() {
           break
         case 'learning':
           apiUrl = `/session/aicontent/stream_more_history_no_rag`
+          break
+        case 'recommend':
+          apiUrl = `/session/aicontent/stream_recommend`
           break
         default:
           apiUrl = `/session/aicontent/stream`
