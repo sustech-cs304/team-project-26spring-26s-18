@@ -14,7 +14,7 @@ client = OpenAI(
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 
-
+# 该接口是最最原始的接口，已经废弃不用了，目前都是使用下面的流式调用接口
 async def ai_chat(
     db,
     session_id: int,
