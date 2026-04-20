@@ -163,6 +163,30 @@ async def api_create_ai_content_stream_recommend(
             yield chunk
     return StreamingResponse(event_generator(), media_type="text/plain")
 
+# Agent模式，实现自主选择工具
+@router.post("/aicontent/agent")
+async def api_create_ai_content_agent(
+    session_id: int = Body(..., embed=True),
+    content: str = Body(..., embed=True),
+    # mode: str = Body("agent", embed=True),      
+    files: Optional[List[str]] = Body(None, embed=True),
+    file_types: Optional[List[str]] = Body(None, embed=True),
+    file_names: Optional[List[str]] = Body(None, embed=True),
+    db: DBSession = Depends(get_db)
+):
+    async def event_generator():
+        from utils.ai_util import agent_chat_stream
+        async for chunk in agent_chat_stream(
+            db=db,
+            session_id=session_id,
+            content=content,
+            files=files,
+            file_types=file_types,
+            file_names=file_names
+        ):
+            yield chunk
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
 
 @router.delete("/content/{content_id}")
 async def api_delete_content(content_id: int, db: DBSession = Depends(get_db)):
