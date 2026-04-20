@@ -36,7 +36,11 @@
           v-for="message in messages" 
           :key="message.id"
           class="message"
-          :class="message.role === 'user' ? 'user-message' : 'ai-message'"
+            :class="{
+            'user-message': message.role === 'user',
+            'ai-message': message.role === 'assistant',
+            'thought-message': message.role === 'thought'
+            }"
         >
           <div class="message-content">
             <!-- assistant的消息全部当markdown解析 -->
@@ -104,6 +108,13 @@
             @click="selectedMode = 'recommend'"
           >
             推荐模式
+          </button>
+          <button 
+            class="mode-btn" 
+            :class="{ active: selectedMode === 'agent' }" 
+            @click="selectedMode = 'agent'"
+          >
+            Agent模式
           </button>
         </div>
       </div>
@@ -278,15 +289,14 @@ function selectSession(sessionId) {
 // 发送消息
 async function sendMessage() {
   if (!inputMessage.value.trim()) return
-  
+
   const messageContent = inputMessage.value.trim()
   inputMessage.value = ''
-  
+
   try {
     // 检查是否是新会话
     if (!activeSessionId.value) {
       // 创建新会话
-      // 取前5个字作为标题，超出加...
       let session_title = messageContent.slice(0, 5)
       if (messageContent.length > 5) {
         session_title += '...'
@@ -302,13 +312,12 @@ async function sendMessage() {
           title: session_title
         })
       })
-      
+
       if (createResponse.ok) {
         const createResult = await createResponse.json()
         const newSession = createResult.data
         activeSessionId.value = newSession.id
-        
-        // 更新会话列表
+
         sessions.value = [...sessions.value, newSession].sort((a, b) => {
           return new Date(b.updated_at) - new Date(a.updated_at)
         })
@@ -317,7 +326,7 @@ async function sendMessage() {
         return
       }
     }
-    
+
     // 处理文件，转换为base64，并收集文件名
     let filesBase64 = []
     let fileTypes = []
@@ -327,11 +336,9 @@ async function sendMessage() {
       fileTypes = selectedFiles.value.map(file => file.type)
       fileNames = selectedFiles.value.map(file => file.name)
     }
-    
-    // 触发AI回复并获取完整对话
+
     loading.value = true
-    
-    // 构建请求数据，增加 file_names 字段
+
     const requestData = {
       session_id: activeSessionId.value,
       content: messageContent,
@@ -339,11 +346,10 @@ async function sendMessage() {
       file_types: fileTypes.length > 0 ? fileTypes : null,
       file_names: fileNames.length > 0 ? fileNames : null
     }
-    
-    // 输出实际传输的内容
+
     console.log('发送给后端的消息数据:', requestData)
-    
-    // 先添加用户消息到界面
+
+    // 添加用户消息
     const userMessage = {
       id: Date.now(),
       role: 'user',
@@ -353,19 +359,9 @@ async function sendMessage() {
     }
     messages.value.push(userMessage)
     scrollToBottom()
-    
-    // 添加一个空的AI消息占位符，用于实时更新内容
-    const aiMessageId = Date.now() + 1
-    const aiMessage = {
-      id: aiMessageId,
-      role: 'assistant',
-      content: '',
-      content_type: 'text',
-      created_at: new Date().toISOString()
-    }
-    messages.value.push(aiMessage)
-    scrollToBottom()
-    
+
+    // 注意：不再预先添加 AI 消息占位符，将在流处理中动态添加
+
     try {
       // 根据选择的模式确定接口URL
       let apiUrl = ''
@@ -379,10 +375,13 @@ async function sendMessage() {
         case 'recommend':
           apiUrl = `/session/aicontent/stream_recommend`
           break
+        case 'agent':
+          apiUrl = `/session/aicontent/agent`
+          break
         default:
           apiUrl = `/session/aicontent/stream`
       }
-      
+
       const aiResponse = await fetch(`http://${ip}${apiUrl}`, {
         method: 'POST',
         headers: {
@@ -391,42 +390,111 @@ async function sendMessage() {
         },
         body: JSON.stringify(requestData)
       })
-      
+
       if (aiResponse.ok) {
-        const reader = aiResponse.body.getReader()
-        const decoder = new TextDecoder()
-        
-        let accumulatedContent = ''
-        
+        const reader = aiResponse.body.getReader();
+        const decoder = new TextDecoder();
+
+        let buffer = '';
+        let answerStarted = false;
+        let aiMessageId = Date.now() + 1;
+
+        // 新增一个变量累积最终回答文本，避免按行追加破坏 Markdown
+        let fullAnswerText = '';
+
         while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          
-          const chunk = decoder.decode(value, { stream: true })
-          accumulatedContent += chunk
-          
-          // 更新AI消息内容
-          const aiMessageIndex = messages.value.findIndex(msg => msg.id === aiMessageId)
-          if (aiMessageIndex !== -1) {
-            messages.value[aiMessageIndex].content = accumulatedContent
-            scrollToBottom()
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+          buffer += chunk;
+
+          // 按行分割处理，但保留原始换行符以便后续完整渲染 Markdown
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // 保留不完整的行
+
+          for (const line of lines) {
+            // 尝试解析 JSON（思考过程）
+            if (line.trim().startsWith('{')) {
+              try {
+                const data = JSON.parse(line);
+                if (data.type === 'thought') {
+                  messages.value.push({
+                    id: Date.now() + Math.random(),
+                    role: 'thought',
+                    content: data.content,
+                    tool_name: data.tool_name,
+                  });
+                  scrollToBottom();
+                }
+                continue; // 跳过 JSON 行，不加入最终回答
+              } catch (e) {
+                // 不是合法 JSON，当作普通文本
+              }
+            }
+
+            // 普通文本：累积到 fullAnswerText，同时保持换行
+            fullAnswerText += line + '\n';
+          }
+
+          // 如果还没创建回答消息，创建它
+          if (!answerStarted && fullAnswerText.length > 0) {
+            messages.value.push({
+              id: aiMessageId,
+              role: 'assistant',
+              content: '',
+              content_type: 'text',
+            });
+            answerStarted = true;
+          }
+
+          // 实时更新回答内容（完整文本，让 Markdown 正确解析）
+          if (answerStarted) {
+            const lastMsg = messages.value.find(m => m.id === aiMessageId);
+            if (lastMsg) {
+              lastMsg.content = fullAnswerText;
+            }
+            scrollToBottom();
           }
         }
-        
-        // 流式传输完成
-        console.log('流式传输完成')
-        
-        // 清空文件列表
-        selectedFiles.value = []
+
+        // 流结束，处理 buffer 中剩余内容（非 JSON 部分）
+        if (buffer.trim() && !buffer.trim().startsWith('{')) {
+          fullAnswerText += buffer;
+          const lastMsg = messages.value.find(m => m.id === aiMessageId);
+          if (lastMsg) {
+            lastMsg.content = fullAnswerText;
+          }
+          scrollToBottom();
+        }
+
+        selectedFiles.value = [];
       } else {
         console.error('API请求失败:', aiResponse.status)
+        messages.value.push({
+          id: Date.now(),
+          role: 'assistant',
+          content: '抱歉，请求失败，请稍后重试。',
+          content_type: 'text',
+          created_at: new Date().toISOString()
+        })
+        scrollToBottom()
       }
     } catch (error) {
-      console.error('流式请求失败:', error)
+      console.error('流式请求错误:', error)
+      messages.value.push({
+        id: Date.now(),
+        role: 'assistant',
+        content: '网络错误或服务异常，请检查连接后重试。',
+        content_type: 'text',
+        created_at: new Date().toISOString()
+      })
+      scrollToBottom()
+    } finally {
+      loading.value = false
     }
   } catch (error) {
     console.error('发送消息失败:', error)
-  } finally {
     loading.value = false
   }
 }
@@ -850,5 +918,28 @@ onMounted(() => {
 .remove-file-btn:hover {
   background-color: #bbdefb;
   color: #333;
+}
+
+
+/* ===== 新增：思考过程消息样式 ===== */
+.thought-message {
+  align-self: flex-start;
+  max-width: 85%;
+}
+
+.thought-message .message-content {
+  background-color: #f5f7fa;
+  color: #6b7a8f;
+  font-style: italic;
+  border-left: 3px solid #a0b3cc;
+  padding: 10px 14px;
+  border-radius: 12px;
+  box-shadow: none;
+  font-size: 13px;
+}
+
+.thought-message .message-content::before {
+  content: "💭 ";
+  opacity: 0.7;
 }
 </style>
