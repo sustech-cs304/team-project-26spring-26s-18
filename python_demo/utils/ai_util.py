@@ -524,34 +524,27 @@ async def ai_chat_stream_less_history_more_rag(
     ai_msg = await create_content(db, session_id, "assistant", full_reply, content_type="text")
     print(f"[ai_chat_stream] AI回复已存储，长度: {len(full_reply)}")
 
-
-_RECOMMEND_MODE_SYSTEM_PROMPT = (
-    "你是「推荐模式」助手，面向校园与学习场景。请结合用户问题以及消息中的[相关历史]检索片段作答。\n"
-    "要求：\n"
-    "1. 优先给出可执行、可对比的推荐（分点、小标题、必要时给出备选方案）。\n"
-    "2. 若检索资料与用户问题关联弱，请说明依据不足，并列出你需要用户补充的关键信息。\n"
-    "3. 语气专业、简洁，避免空话套话。"
-)
-
-
+# 推荐模式专用流式接口：精简回复
 async def ai_chat_stream_recommend(
     db,
     session_id: int,
     content: str,
     files=None,
     file_types=None,
-    file_names=None,
+    file_names=None
 ):
     """
-    推荐模式（流式）：中等对话历史 + RAG + 专用 system 提示，侧重分点推荐与可执行建议。
+    推荐模式专用AI对话接口（流式）。
+    特点：回复精简，适合与资源推荐卡片配合使用。
     """
     msg_content = []
     user_msgs = []
 
     t0 = time.time()
     print(f"[ai_chat_stream_recommend] step0: 开始, t={t0}")
+    # 1. 查询历史消息（最近3条，保持简短）
     t1 = time.time()
-    history_msgs = await get_last_n_content_by_session_id(db, session_id, n=4)
+    history_msgs = await get_last_n_content_by_session_id(db, session_id, n=3)
     t2 = time.time()
     print(f"[ai_chat_stream_recommend] step1: 查询历史消息耗时: {t2-t1:.2f}s")
     history_contents = []
@@ -567,6 +560,7 @@ async def ai_chat_stream_recommend(
             content_list.append({"type": "text", "text": f"md不是连接，而是下面的内容: {msg.content}"})
         history_contents.append({"role": msg.role, "content": content_list})
 
+    # 2. 处理本次用户文本和文件
     t3 = time.time()
     user_msg = await create_content(db, session_id, "user", content, content_type="text", name=None)
     user_msgs.append(user_msg)
@@ -606,7 +600,12 @@ async def ai_chat_stream_recommend(
     print(f"[ai_chat_stream_recommend] step3: 处理文件耗时: {t5-t4:.2f}s")
     msg_content.append({"type": "text", "text": content})
 
+    # 3. 同时进行向量数据库检索和网络搜索
     t6 = time.time()
+    related_context = []
+    web_resources = []
+
+    # 3.1 向量数据库检索
     try:
         embedding_service = EmbeddingService()
         vector_store = VectorStore()
@@ -614,37 +613,95 @@ async def ai_chat_stream_recommend(
         query_embedding = embedding_service.embed(content)
         t6_2 = time.time()
         print(f"[ai_chat_stream_recommend] step4: query embedding耗时: {t6_2-t6_1:.2f}s")
-        related = vector_store.search(query_embedding, top_k=8)
+        related = vector_store.search(query_embedding, top_k=5)
         t6_3 = time.time()
         print(f"[ai_chat_stream_recommend] step5: 向量检索耗时: {t6_3-t6_2:.2f}s")
-        related_context = []
-        for chunk in related:
+
+        has_knowledge_base_content = len(related) > 0 and any(r.get('score', 0) > 0.3 for r in related)
+
+        if has_knowledge_base_content:
             related_context.append({
                 "role": "system",
-                "content": [{"type": "text", "text": f"[相关历史] {chunk['content']}"}]
+                "content": [{"type": "text", "text": "[知识库检索结果] 找到以下相关内容："}]
+            })
+            for i, chunk in enumerate(related[:3], 1):
+                if chunk.get('score', 0) > 0.3:
+                    related_context.append({
+                        "role": "system",
+                        "content": [{"type": "text", "text": f"{i}. 来源：{chunk.get('source', '未知')} | 相关内容：{chunk.get('content', '')[:300]}..."}]
+                    })
+        else:
+            related_context.append({
+                "role": "system",
+                "content": [{"type": "text", "text": "[知识库检索结果] 未在知识库中找到相关内容。"}]
             })
     except Exception as e:
-        print(f"[ai_chat_stream_recommend] 检索相关内容失败: {e}")
-        related_context = []
-    t7 = time.time()
-    print(f"[ai_chat_stream_recommend] step6: 检索相关历史总耗时: {t7-t6:.2f}s")
-
-    messages = [
-        {
+        print(f"[ai_chat_stream_recommend] 向量检索失败: {e}")
+        has_knowledge_base_content = False
+        related_context.append({
             "role": "system",
-            "content": [{"type": "text", "text": _RECOMMEND_MODE_SYSTEM_PROMPT}],
-        }
-    ]
+            "content": [{"type": "text", "text": "[知识库检索结果] 知识库检索失败。"}]
+        })
+
+    # 3.2 网络搜索
+    try:
+        from utils.recommend_resources_util import search_web_duckduckgo
+        web_results = search_web_duckduckgo(content, max_items=5)
+        t6_4 = time.time()
+        print(f"[ai_chat_stream_recommend] step5b: 网络搜索耗时: {t6_4-t6_3:.2f}s")
+
+        if web_results:
+            web_resources.append({
+                "role": "system",
+                "content": [{"type": "text", "text": "[网络搜索资源] 找到以下相关网页："}]
+            })
+            for i, result in enumerate(web_results[:3], 1):
+                web_resources.append({
+                    "role": "system",
+                    "content": [{"type": "text", "text": f"{i}. {result.get('title', '无标题')} - {result.get('url', '')}\n摘要：{result.get('snippet', '无摘要')[:150]}"}]
+                })
+        else:
+            web_resources.append({
+                "role": "system",
+                "content": [{"type": "text", "text": "[网络搜索资源] 未找到相关网络资源。"}]
+            })
+    except Exception as e:
+        print(f"[ai_chat_stream_recommend] 网络搜索失败: {e}")
+        web_resources.append({
+            "role": "system",
+            "content": [{"type": "text", "text": "[网络搜索资源] 网络搜索失败。"}]
+        })
+
+    t7 = time.time()
+    print(f"[ai_chat_stream_recommend] step6: 检索总耗时: {t7-t6:.2f}s")
+
+    # 4. 拼装最终 messages（添加智能回复的system prompt）
+    messages = []
+    # 添加智能回复的 system prompt
+    system_prompt = """你是学生助手。请遵循以下规则回答问题：
+
+1. 如果[知识库检索结果]中有相关内容，优先基于知识库内容回答，并简要提及相关资源
+2. 如果知识库中没有相关内容，但[网络搜索资源]中有，请基于网络资源回答，并在回答末尾提供1-2个最相关的网址链接
+3. 如果两者都没有，给出简短建议，并建议用户尝试更换关键词或上传相关资料
+4. 回答要精炼（2-3句话），不要重复列举所有资源
+5. 提供网址时使用Markdown格式：[标题](URL)"""
+
+    messages.append({
+        "role": "system",
+        "content": [{"type": "text", "text": system_prompt}]
+    })
     for h in history_contents:
         messages.append({"role": h["role"], "content": h["content"]})
     messages.extend(related_context)
+    messages.extend(web_resources)
     messages.append({"role": "user", "content": msg_content})
 
     t8 = time.time()
     print(f"[ai_chat_stream_recommend] step7: 拼装messages耗时: {t8-t7:.2f}s")
+    # 5. 调用大模型（流式）
     t9 = time.time()
     print(f"[ai_chat_stream_recommend] step8: 开始调用大模型, t={t9}")
-
+    # openai流式接口为同步生成器，这里用线程池包装
     def stream_gen():
         return client.chat.completions.create(
             model="qwen3.6-plus",
@@ -661,5 +718,6 @@ async def ai_chat_stream_recommend(
             if delta:
                 yield delta
                 full_reply += delta
+    # 6. 插入AI回复到数据库
     ai_msg = await create_content(db, session_id, "assistant", full_reply, content_type="text")
     print(f"[ai_chat_stream_recommend] AI回复已存储，长度: {len(full_reply)}")

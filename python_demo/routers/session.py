@@ -1,8 +1,9 @@
 import time
 print(f"[启动分析] routers/session.py 开始导入 {time.time()}")
-from fastapi import APIRouter, Depends, HTTPException,Body
+from fastapi import APIRouter, Depends, HTTPException, Body
+from sqlalchemy import select, delete
 from sqlalchemy.orm import Session as DBSession
-from typing import List, Optional
+from typing import Dict, List, Optional
 from schemas.session import Session as SessionSchema, SessionContent as SessionContentSchema
 from utils.Result import Result
 from schemas.session import Session as SessionSchema, SessionContent as SessionContentSchema
@@ -19,6 +20,10 @@ from crud.session import (
 from config.db_config import get_db
 from utils.ai_util import ai_chat, ai_chat_stream
 from fastapi.responses import StreamingResponse
+from models.session import Session as SessionModel, SessionContent
+from utils.recommend_resources_util import extract_session_links, search_rag_sources
+from utils.ai_resource_recommender import generate_resource_recommendations
+from utils.url_verifier import verify_and_get_urls
 
 router = APIRouter(prefix="/session", tags=["session"])
 
@@ -139,8 +144,7 @@ async def api_create_ai_content_stream_more_history_no_rag(
             yield chunk
     return StreamingResponse(event_generator(), media_type="text/plain")
 
-
-# 推荐模式：中等历史 + RAG + 专用 system 提示
+# 新增流式接口：推荐模式专用，精简回复
 @router.post("/aicontent/stream_recommend")
 async def api_create_ai_content_stream_recommend(
     session_id: int = Body(..., embed=True),
@@ -162,6 +166,142 @@ async def api_create_ai_content_stream_recommend(
         ):
             yield chunk
     return StreamingResponse(event_generator(), media_type="text/plain")
+
+
+@router.post("/recommend/resources")
+async def api_recommend_resources(
+    user_id: int = Body(..., embed=True),
+    query: str = Body("", embed=True),
+    session_id: Optional[int] = Body(None, embed=True),
+    db: DBSession = Depends(get_db),
+):
+    """
+    推荐资料：智能判断是否展示推荐卡片
+    返回分类结果：课件(lecture)、习题(exercise)、参考资料(reference)
+    新增：MOOC、GitHub、教程等推荐资源
+    """
+    q = (query or "").strip()
+    session_links: List[Dict] = []
+
+    if session_id is not None:
+        res = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
+        sess = res.scalar_one_or_none()
+        if not sess or sess.user_id != user_id:
+            raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+        contents = list(await get_content_by_session_id(db, session_id))
+        session_links = extract_session_links(contents)
+        if not q:
+            for row in reversed(contents):
+                if row.role == "user" and row.content_type == "text" and (row.content or "").strip():
+                    q = row.content.strip()
+                    break
+
+    if not q:
+        return Result.error("请输入检索内容，或选择会话后由系统取您最后一条文字消息作为检索词")
+
+    # 1. 知识库检索
+    rag_result = search_rag_sources(q, top_k=15, score_threshold=0.15)
+
+    has_local = len(rag_result.get("all", [])) > 0
+    
+    # 2. 如果本地资源不足，使用 AI 生成推荐资源
+    web_results = []
+    has_web = False
+
+    # 当本地资源少于3个时，使用 AI 生成推荐
+    local_count = len(rag_result.get("all", []))
+    if local_count < 3:
+        print(f"[api_recommend_resources] 本地资源仅 {local_count} 个，使用 AI 生成推荐...")
+        try:
+            ai_recommendations = await generate_resource_recommendations(q, rag_result.get("all", []))
+            # 验证前3个推荐的真实 URL
+            if ai_recommendations:
+                print(f"[api_recommend_resources] 开始验证 {min(3, len(ai_recommendations))} 个资源的 URL...")
+                ai_recommendations = verify_and_get_urls(ai_recommendations, max_verify=3)
+            # 将 AI 推荐转换为 web 格式
+            for rec in ai_recommendations[:5]:
+                title = rec.get("title", "") or ""
+                url = rec.get("url", "") or ""
+                platform = rec.get("platform", "") or ""
+                desc = rec.get("description", "") or ""
+                course_slug = rec.get("course_slug", "") or ""
+
+                # 分析 URL 类型
+                is_specific_url = False
+                is_search_url = "bing.com" in url.lower() or "search" in url.lower()
+
+                # 如果 URL 包含具体课程路径（如 /learn/ /course/ /video/），认为是具体 URL
+                if any(x in url.lower() for x in ["/learn/", "/course/", "/video/", "github.com/", "/tutorial/", "/doc/"]):
+                    is_specific_url = True
+
+                # 构建备用搜索链接
+                search_query = f"{title} {platform}".replace(" ", "+").replace("&", "%26")[:150]
+                search_url = f"https://www.bing.com/search?q={search_query}"
+
+                # 如果 AI 没提供 URL 或提供的是搜索链接，尝试构建标准格式的 URL
+                if not url or is_search_url:
+                    # 根据平台和 course_slug 构建可能的 URL
+                    if course_slug:
+                        if "coursera" in platform.lower():
+                            url = f"https://www.coursera.org/learn/{course_slug}"
+                            is_specific_url = True
+                        elif "edx" in platform.lower():
+                            url = f"https://www.edx.org/course/{course_slug}"
+                            is_specific_url = True
+                        elif "bilibili" in platform.lower() or "b站" in platform.lower():
+                            # B站使用搜索链接
+                            url = f"https://search.bilibili.com/all?keyword={course_slug}"
+                        elif "github" in platform.lower():
+                            url = f"https://github.com/search?q={course_slug}&type=repositories"
+                    else:
+                        url = search_url
+
+                # 检查 URL 是否经过搜索验证
+                url_verified = rec.get('url_verified', False)
+                original_url = rec.get('original_url', url)
+
+                # 构建详细的 snippet
+                snippet_parts = []
+                snippet_parts.append(f"[{rec.get('type', 'resource').upper()}]")
+                if platform:
+                    verified_mark = "✓" if url_verified else ""
+                    snippet_parts.append(f"平台: {platform} {verified_mark}")
+                if desc:
+                    snippet_parts.append(desc)
+                snippet_parts.append(f"难度: {rec.get('difficulty', 'unknown')}")
+
+                web_results.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": " | ".join(snippet_parts),
+                    "source": "ai-generated",
+                    "platform": platform,
+                    "description": desc,
+                    "difficulty": rec.get('difficulty', 'unknown'),
+                    "is_specific_url": is_specific_url or url_verified,
+                    "url_verified": url_verified,
+                    "search_url": search_url  # 备用搜索链接
+                })
+            has_web = len(web_results) > 0
+            print(f"[api_recommend_resources] AI 生成 {len(web_results)} 个推荐")
+        except Exception as e:
+            print(f"[api_recommend_resources] AI 生成推荐失败: {e}")
+    
+    # 判断是否应该展示推荐卡片（有本地资源或网络资源即可展示）
+    should_show = has_local or has_web
+
+    return Result.success({
+        "query_used": q,
+        "should_show_recommendation": should_show,
+        "lecture": rag_result.get("lecture", []),
+        "exercise": rag_result.get("exercise", []),
+        "reference": rag_result.get("reference", []),
+        "other": rag_result.get("other", []),
+        "web": web_results,
+        "has_local": has_local,
+        "has_web": has_web,
+        "session_links": session_links,
+    })
 
 
 @router.delete("/content/{content_id}")
