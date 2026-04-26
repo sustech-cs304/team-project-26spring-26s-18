@@ -380,6 +380,13 @@
           >
             推荐模式
           </button>
+          <button 
+            class="mode-btn" 
+            :class="{ active: selectedMode === 'agent' }" 
+            @click="selectedMode = 'agent'"
+          >
+            Agent模式
+          </button>
         </div>
       </div>
       
@@ -568,15 +575,14 @@ function selectSession(sessionId) {
 // 发送消息
 async function sendMessage() {
   if (!inputMessage.value.trim()) return
-  
+
   const messageContent = inputMessage.value.trim()
   inputMessage.value = ''
-  
+
   try {
     // 检查是否是新会话
     if (!activeSessionId.value) {
       // 创建新会话
-      // 取前5个字作为标题，超出加...
       let session_title = messageContent.slice(0, 5)
       if (messageContent.length > 5) {
         session_title += '...'
@@ -592,13 +598,12 @@ async function sendMessage() {
           title: session_title
         })
       })
-      
+
       if (createResponse.ok) {
         const createResult = await createResponse.json()
         const newSession = createResult.data
         activeSessionId.value = newSession.id
-        
-        // 更新会话列表
+
         sessions.value = [...sessions.value, newSession].sort((a, b) => {
           return new Date(b.updated_at) - new Date(a.updated_at)
         })
@@ -607,7 +612,7 @@ async function sendMessage() {
         return
       }
     }
-    
+
     // 处理文件，转换为base64，并收集文件名
     let filesBase64 = []
     let fileTypes = []
@@ -617,11 +622,9 @@ async function sendMessage() {
       fileTypes = selectedFiles.value.map(file => file.type)
       fileNames = selectedFiles.value.map(file => file.name)
     }
-    
-    // 触发AI回复并获取完整对话
+
     loading.value = true
-    
-    // 构建请求数据，增加 file_names 字段
+
     const requestData = {
       session_id: activeSessionId.value,
       content: messageContent,
@@ -629,11 +632,10 @@ async function sendMessage() {
       file_types: fileTypes.length > 0 ? fileTypes : null,
       file_names: fileNames.length > 0 ? fileNames : null
     }
-    
-    // 输出实际传输的内容
+
     console.log('发送给后端的消息数据:', requestData)
-    
-    // 先添加用户消息到界面
+
+    // 添加用户消息
     const userMessage = {
       id: Date.now(),
       role: 'user',
@@ -679,9 +681,13 @@ async function sendMessage() {
           // 推荐模式使用精简回复接口
           apiUrl = `/session/aicontent/stream_recommend`
           break
+        case 'agent':
+          apiUrl = `/session/aicontent/agent`
+          break
         default:
           apiUrl = `/session/aicontent/stream`
       }
+
 
       const aiResponse = await fetch(`http://${ip}${apiUrl}`, {
         method: 'POST',
@@ -691,6 +697,7 @@ async function sendMessage() {
         },
         body: JSON.stringify(requestData)
       })
+
 
       if (aiResponse.ok) {
         const reader = aiResponse.body.getReader()
@@ -717,13 +724,30 @@ async function sendMessage() {
         console.log('流式传输完成')
       } else {
         console.error('API请求失败:', aiResponse.status)
+        messages.value.push({
+          id: Date.now(),
+          role: 'assistant',
+          content: '抱歉，请求失败，请稍后重试。',
+          content_type: 'text',
+          created_at: new Date().toISOString()
+        })
+        scrollToBottom()
       }
     } catch (error) {
-      console.error('流式请求失败:', error)
+      console.error('流式请求错误:', error)
+      messages.value.push({
+        id: Date.now(),
+        role: 'assistant',
+        content: '网络错误或服务异常，请检查连接后重试。',
+        content_type: 'text',
+        created_at: new Date().toISOString()
+      })
+      scrollToBottom()
+    } finally {
+      loading.value = false
     }
   } catch (error) {
     console.error('发送消息失败:', error)
-  } finally {
     loading.value = false
   }
 }
@@ -1968,5 +1992,28 @@ onMounted(() => {
 .remove-file-btn:hover {
   background-color: #bbdefb;
   color: #333;
+}
+
+
+/* ===== 新增：思考过程消息样式 ===== */
+.thought-message {
+  align-self: flex-start;
+  max-width: 85%;
+}
+
+.thought-message .message-content {
+  background-color: #f5f7fa;
+  color: #6b7a8f;
+  font-style: italic;
+  border-left: 3px solid #a0b3cc;
+  padding: 10px 14px;
+  border-radius: 12px;
+  box-shadow: none;
+  font-size: 13px;
+}
+
+.thought-message .message-content::before {
+  content: "💭 ";
+  opacity: 0.7;
 }
 </style>

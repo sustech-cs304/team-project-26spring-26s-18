@@ -14,7 +14,7 @@ client = OpenAI(
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 
-
+# 该接口是最最原始的接口，已经废弃不用了，目前都是使用下面的流式调用接口
 async def ai_chat(
     db,
     session_id: int,
@@ -721,3 +721,194 @@ async def ai_chat_stream_recommend(
     # 6. 插入AI回复到数据库
     ai_msg = await create_content(db, session_id, "assistant", full_reply, content_type="text")
     print(f"[ai_chat_stream_recommend] AI回复已存储，长度: {len(full_reply)}")
+
+
+import json
+import asyncio
+from functools import partial
+
+# 定义 Agent 可调用的工具列表（对应已有的专业模式）
+AGENT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "use_campus_assistant",
+            "description": "当用户询问校园生活、政策、设施、校历、活动、选课、宿舍、食堂等与校园相关的问题时调用此工具。它会检索校园知识库并给出详细回答。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_question": {
+                        "type": "string",
+                        "description": "用户提出的原始问题，将原样传递给校园助手处理"
+                    }
+                },
+                "required": ["user_question"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "use_learning_assistant",
+            "description": "当用户询问学习、作业、笔记、文献、课程内容、知识点讲解、考试复习等与学习相关的问题时调用此工具。它更注重对话历史的连续性和深度解释。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_question": {
+                        "type": "string",
+                        "description": "用户提出的原始问题，将原样传递给学习助手处理"
+                    }
+                },
+                "required": ["user_question"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "direct_answer",
+            "description": "当用户问题比较简单、属于打招呼、常识问答、或者无需调用专业助手即可回答时使用。例如：你好、今天天气、简单计算等。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "response": {
+                        "type": "string",
+                        "description": "直接回复用户的内容"
+                    }
+                },
+                "required": ["response"]
+            }
+        }
+    }
+]
+
+
+async def agent_chat_stream(
+    db,
+    session_id: int,
+    content: str,
+    files=None,
+    file_types=None,
+    file_names=None
+):
+    """
+    Agent 调度模式（流式）：
+    1. 让千问决定调用哪个工具（campus/learning/direct）
+    2. 流式发送决策过程（JSON 行）
+    3. 调用对应的子模式函数，将其流式输出透传
+    """
+    # ---------- 1. 保存用户消息到数据库 ----------
+    user_msg = await create_content(db, session_id, "user", content, content_type="text", name=None)
+    # 文件处理：直接透传给后续子模式，此处不重复存储
+    # （子模式内部会处理文件存储）
+
+    # ---------- 2. 构建第一轮决策对话 ----------
+    system_prompt = (
+        "你是一个智能调度助手。根据用户的问题，判断应该调用哪个专业工具：\n"
+        "- use_campus_assistant: 校园生活、政策、设施、校历、选课、宿舍、食堂等\n"
+        "- use_learning_assistant: 学习、作业、笔记、文献、课程内容、知识点讲解等\n"
+        "- direct_answer: 简单问候、常识问答、无需专业检索的问题\n"
+        "请选择最合适的工具并填写参数，若总结pdf、md文档，则一定调用use_learning_assistant"
+    )
+
+    decision_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": content}
+    ]
+
+    loop = asyncio.get_event_loop()
+    try:
+        response = await loop.run_in_executor(
+            None,
+            partial(
+                client.chat.completions.create,
+                model="qwen-max",      # qwen-max 对 function calling 支持更稳定
+                messages=decision_messages,
+                tools=AGENT_TOOLS,
+                tool_choice="auto"
+            )
+        )
+    except Exception as e:
+        # 如果 function calling 失败，降级为直接使用校园助手
+        print(f"[Agent] 决策调用失败: {e}，降级为校园助手")
+        tool_name = "use_campus_assistant"
+        tool_args = {"user_question": content}
+        # 发送降级思考信息
+        yield json.dumps({
+            "type": "thought",
+            "content": f"🤔 决策调用失败，默认使用校园助手处理您的问题。",
+            "tool_name": tool_name
+        }, ensure_ascii=False) + "\n"
+    else:
+        msg = response.choices[0].message
+        tool_calls = msg.tool_calls
+
+        if not tool_calls:
+            # 没有工具调用，可能直接回复了（罕见情况）
+            reply = msg.content or "好的，请告诉我您需要什么帮助。"
+            for char in reply:
+                yield char
+                await asyncio.sleep(0.01)
+            await create_content(db, session_id, "assistant", reply, content_type="text")
+            return
+
+        # 取第一个工具调用
+        tool_call = tool_calls[0]
+        tool_name = tool_call.function.name
+        tool_args = json.loads(tool_call.function.arguments)
+
+        # 发送思考过程给前端（JSON 行）
+        thought_content = f"🤔 分析您的问题后，我将调用【{tool_name}】来处理。"
+        yield json.dumps({
+            "type": "thought",
+            "content": thought_content,
+            "tool_name": tool_name,
+            "tool_args": tool_args
+        }, ensure_ascii=False) + "\n"
+
+    # ---------- 3. 根据工具名调用对应的子模式流式函数 ----------
+    # 准备子问题：对于专业工具，传递原始问题；对于 direct_answer，直接返回预设回复
+    if tool_name == "use_campus_assistant":
+        sub_content = tool_args.get("user_question", content)
+        # 调用校园助手流式函数
+        async for chunk in ai_chat_stream_less_history_more_rag(
+            db=db,
+            session_id=session_id,
+            content=sub_content,
+            files=files,
+            file_types=file_types,
+            file_names=file_names
+        ):
+            yield chunk
+
+    elif tool_name == "use_learning_assistant":
+        sub_content = tool_args.get("user_question", content)
+        async for chunk in ai_chat_stream_more_history_no_rag(
+            db=db,
+            session_id=session_id,
+            content=sub_content,
+            files=files,
+            file_types=file_types,
+            file_names=file_names
+        ):
+            yield chunk
+
+    elif tool_name == "direct_answer":
+        reply = tool_args.get("response", "好的，我明白了。")
+        for char in reply:
+            yield char
+            await asyncio.sleep(0.01)
+        await create_content(db, session_id, "assistant", reply, content_type="text")
+
+    else:
+        # 未知工具，降级为校园助手
+        print(f"[Agent] 未知工具 {tool_name}，降级为校园助手")
+        async for chunk in ai_chat_stream_less_history_more_rag(
+            db=db,
+            session_id=session_id,
+            content=content,
+            files=files,
+            file_types=file_types,
+            file_names=file_names
+        ):
+            yield chunk
