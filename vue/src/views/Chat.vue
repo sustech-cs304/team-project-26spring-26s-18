@@ -408,11 +408,25 @@
             @change="handleFileChange"
             style="display: none;"
           />
+          <button
+            v-if="isSpeechSupported"
+            class="file-btn speech-btn"
+            :class="{ listening: speechListening }"
+            type="button"
+            :title="speechListening ? '停止语音输入' : '开始语音输入'"
+            @click="toggleSpeechRecognition"
+          >
+            {{ speechListening ? '●' : '🎙️' }}
+          </button>
           <button class="file-btn" @click="triggerFileInput">
             📎
           </button>
         </div>
         <button class="send-btn" @click="sendMessage">发送</button>
+      </div>
+      <div v-if="speechInterimTranscript || speechErrorMessage" class="speech-status" :class="{ error: speechErrorMessage }">
+        <span v-if="speechInterimTranscript">正在识别：{{ speechInterimTranscript }}</span>
+        <span v-else>{{ speechErrorMessage }}</span>
       </div>
       <!-- 文件列表 -->
       <div v-if="selectedFiles.length > 0" class="file-list">
@@ -430,6 +444,7 @@ import { ref, onMounted, watch, nextTick } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { ip } from '@/config/config'
 import { marked } from 'marked'
+import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 
 const userStore = useUserStore()
 const sessions = ref([])
@@ -442,6 +457,17 @@ const fileInput = ref(null)
 const selectedFiles = ref([])
 const selectedMode = ref('default') // 默认模式
 const loadingResources = ref(false)
+const committedSpeechTranscript = ref('')
+
+const {
+  isSupported: isSpeechSupported,
+  isListening: speechListening,
+  interimTranscript: speechInterimTranscript,
+  finalTranscript: speechFinalTranscript,
+  errorMessage: speechErrorMessage,
+  start: startSpeechRecognition,
+  stop: stopSpeechRecognition,
+} = useSpeechRecognition()
 
 // 文件图标映射
 function getFileIcon(fileType) {
@@ -467,6 +493,22 @@ function scrollToBottom() {
       chatContentRef.value.scrollTop = chatContentRef.value.scrollHeight
     }
   })
+}
+
+function appendSpeechText(text) {
+  const recognizedText = text.trim()
+  if (!recognizedText) return
+
+  const currentText = inputMessage.value.trim()
+  inputMessage.value = currentText ? `${currentText} ${recognizedText}` : recognizedText
+}
+
+function toggleSpeechRecognition() {
+  if (speechListening.value) {
+    stopSpeechRecognition()
+  } else {
+    startSpeechRecognition()
+  }
 }
 
 // 获取用户会话列表
@@ -872,6 +914,22 @@ async function deleteSession(sessionId) {
   }
   }
 }
+
+// 监听语音识别最终文本并追加到输入框
+watch(speechFinalTranscript, (newTranscript) => {
+  if (!newTranscript) {
+    committedSpeechTranscript.value = ''
+    return
+  }
+
+  let newText = newTranscript
+  if (committedSpeechTranscript.value && newTranscript.startsWith(committedSpeechTranscript.value)) {
+    newText = newTranscript.slice(committedSpeechTranscript.value.length)
+  }
+
+  appendSpeechText(newText)
+  committedSpeechTranscript.value = newTranscript
+})
 
 // 监听登录状态变化
 watch(() => userStore.isLoggedIn, (isLoggedIn) => {
@@ -1904,7 +1962,7 @@ onMounted(() => {
 
 .chat-input {
   flex: 1;
-  padding: 12px 40px 12px 16px;
+  padding: 12px 80px 12px 16px;
   border: 1px solid #e0e0e0;
   border-radius: 24px;
   font-size: 14px;
@@ -1933,6 +1991,27 @@ onMounted(() => {
 
 .file-btn:hover {
   background-color: #e0e0e0;
+}
+
+.speech-btn {
+  right: 44px;
+}
+
+.speech-btn.listening {
+  color: #d32f2f;
+  background-color: #ffebee;
+}
+
+.speech-status {
+  padding: 0 20px 10px;
+  background-color: white;
+  color: #666;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.speech-status.error {
+  color: #d32f2f;
 }
 
 .send-btn {
