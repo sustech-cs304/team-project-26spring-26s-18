@@ -2,18 +2,10 @@ name: PR Check
 
 on:
   pull_request:
-    branches: [ "main"]
-    paths:
-      - "vue/**"
-      - "python_demo/**"
-      - ".github/workflows/**"
+    branches: ["main"]
 
   push:
     branches: ["main"]
-    paths:
-      - "vue/**"
-      - "python_demo/**"
-      - ".github/workflows/**"
 
   workflow_dispatch:
 
@@ -24,9 +16,11 @@ jobs:
   frontend-build:
     name: Frontend Build
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: vue
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,17 +34,27 @@ jobs:
 
       - name: Install frontend deps
         run: npm ci
+
       - name: Lint frontend
         run: npm run lint
+
       - name: Build frontend
         run: npm run build
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: vue/dist
 
   backend-smoke:
     name: Backend Smoke Check
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: python_demo
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,5 +64,28 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest
+
       - name: Compile Python files
         run: python -m compileall .
+
+      - name: Run backend tests
+        run: pytest -q tests
+
+      - name: Package backend artifact
+        run: |
+          tar \
+            --exclude='__pycache__' \
+            --exclude='.pytest_cache' \
+            --exclude='*.pyc' \
+            -czf "$RUNNER_TEMP/backend-runtime.tar.gz" .
+
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-runtime
+          path: ${{ runner.temp }}/backend-runtime.tar.gz
