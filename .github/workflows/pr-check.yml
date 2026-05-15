@@ -74,7 +74,7 @@ jobs:
         run: python -m compileall .
 
       - name: Run backend tests
-        run: pytest -q
+        run: pytest -q tests
 
       - name: Package backend artifact
         run: |
