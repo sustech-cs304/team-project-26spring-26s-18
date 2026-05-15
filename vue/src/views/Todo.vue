@@ -83,92 +83,102 @@
           @import-course-schedule="openImportDialog('course-schedule')"
         />
 
-        <section class="source-preview-panel">
+        <section class="source-preview-panel" :class="{ collapsed: sourcePreviewCollapsed }">
           <div class="source-preview-top">
             <div>
               <div class="preview-eyebrow">Source Import</div>
-              <h3>已导入来源预览</h3>
+              <h3>{{ sourcePreviewCollapsed ? 'Imported items' : '已导入来源预览' }}</h3>
             </div>
-            <div class="preview-tabs">
-              <button
-                class="preview-tab"
-                :class="{ active: activeSourceTab === 'official-calendar' }"
-                @click="activeSourceTab = 'official-calendar'"
-              >
-                官方校历
-              </button>
-              <button
-                class="preview-tab"
-                :class="{ active: activeSourceTab === 'course-schedule' }"
-                @click="activeSourceTab = 'course-schedule'"
-              >
-                课程表
-              </button>
-              <button
-                class="preview-tab"
-                :class="{ active: activeSourceTab === 'blackboard' }"
-                @click="activeSourceTab = 'blackboard'"
-              >
-                Blackboard
-              </button>
+            <div class="source-preview-controls">
+              <div class="source-preview-actions">
+                <span class="source-preview-count">{{ importedSourceItemCount }} items</span>
+                <button class="preview-collapse-btn" @click="sourcePreviewCollapsed = !sourcePreviewCollapsed">
+                  {{ sourcePreviewCollapsed ? '展开' : '收起' }}
+                </button>
+              </div>
+              <div v-if="!sourcePreviewCollapsed" class="preview-tabs">
+                <button
+                  class="preview-tab"
+                  :class="{ active: activeSourceTab === 'official-calendar' }"
+                  @click="activeSourceTab = 'official-calendar'"
+                >
+                  官方校历
+                </button>
+                <button
+                  class="preview-tab"
+                  :class="{ active: activeSourceTab === 'course-schedule' }"
+                  @click="activeSourceTab = 'course-schedule'"
+                >
+                  课程表
+                </button>
+                <button
+                  class="preview-tab"
+                  :class="{ active: activeSourceTab === 'blackboard' }"
+                  @click="activeSourceTab = 'blackboard'"
+                >
+                  Blackboard
+                </button>
+              </div>
             </div>
           </div>
 
-          <div v-if="lastImportSummary" class="import-summary">
-            <strong>{{ lastImportSummary.sourceLabel }}</strong>
-            已导入 {{ lastImportSummary.importedCount }} 条，跳过 {{ lastImportSummary.skippedCount }} 条。
-            <span v-if="lastImportSummary.previewCount"> 预览已刷新 {{ lastImportSummary.previewCount }} 条。</span>
-            <div v-if="lastImportSummary.skippedRows?.length" class="import-skipped">
-              {{ lastImportSummary.skippedRows.slice(0, 3).join('；') }}
+          <div v-if="!sourcePreviewCollapsed" class="source-preview-body">
+            <div v-if="lastImportSummary" class="import-summary">
+              <strong>{{ lastImportSummary.sourceLabel }}</strong>
+              已导入 {{ lastImportSummary.importedCount }} 条，跳过 {{ lastImportSummary.skippedCount }} 条。
+              <span v-if="lastImportSummary.previewCount"> 预览已刷新 {{ lastImportSummary.previewCount }} 条。</span>
+              <div v-if="lastImportSummary.skippedRows?.length" class="import-skipped">
+                {{ lastImportSummary.skippedRows.slice(0, 3).join('；') }}
+              </div>
             </div>
-          </div>
 
-          <div v-if="activeSourceTab === 'official-calendar'" class="source-list">
-            <div v-if="officialCalendarEvents.length" class="source-count">共 {{ officialCalendarEvents.length }} 条官方校历事件</div>
-            <div v-else class="empty-state">暂无官方校历数据</div>
-            <article v-for="event in officialCalendarEvents" :key="`official-${event.id}`" class="source-card">
-              <div class="source-card-head">
-                <strong>{{ event.title }}</strong>
-                <div class="source-badges">
-                  <span class="source-tag" :class="event.display_mode === 'background' ? 'is-background' : 'is-event'">
-                    {{ getOfficialDisplayModeLabel(event.display_mode) }}
-                  </span>
-                  <span class="source-tag">{{ event.event_type || 'event' }}</span>
+            <div v-if="activeSourceTab === 'official-calendar'" class="source-list">
+              <div v-if="officialCalendarEvents.length" class="source-count">共 {{ officialCalendarEvents.length }} 条官方校历事件</div>
+              <div v-else class="empty-state">暂无官方校历数据</div>
+              <article v-for="event in officialCalendarEvents" :key="`official-${event.id}`" class="source-card">
+                <div class="source-card-head">
+                  <strong>{{ event.title }}</strong>
+                  <div class="source-badges">
+                    <span class="source-tag" :class="event.display_mode === 'background' ? 'is-background' : 'is-event'">
+                      {{ getOfficialDisplayModeLabel(event.display_mode) }}
+                    </span>
+                    <span class="source-tag">{{ event.event_type || 'event' }}</span>
+                  </div>
                 </div>
-              </div>
-              <div v-if="event.source_year" class="source-meta">来源年份：{{ event.source_year }}</div>
-              <div class="source-meta">{{ formatSourceDateRange(event.start_time, event.end_time) }}</div>
-              <div v-if="event.location" class="source-meta">{{ event.location }}</div>
-              <p v-if="event.description" class="source-desc">{{ event.description }}</p>
-            </article>
-          </div>
+                <div v-if="event.source_year" class="source-meta">来源年份：{{ event.source_year }}</div>
+                <div class="source-meta">{{ formatSourceDateRange(event.start_time, event.end_time) }}</div>
+                <div v-if="event.location" class="source-meta">{{ event.location }}</div>
+                <p v-if="event.description" class="source-desc">{{ event.description }}</p>
+              </article>
+            </div>
 
-          <div v-else-if="activeSourceTab === 'course-schedule'" class="source-list">
-            <div v-if="courseScheduleEvents.length" class="source-count">共 {{ courseScheduleEvents.length }} 条课程表事件</div>
-            <div v-else class="empty-state">暂无课程表数据</div>
-            <article v-for="event in courseScheduleEvents" :key="`course-${event.id}`" class="source-card">
-              <div class="source-card-head">
-                <strong>{{ event.course_name || event.title }}</strong>
-                <span v-if="event.course_code" class="source-tag">{{ event.course_code }}</span>
-              </div>
-              <div class="source-meta">{{ formatSourceDateRange(event.start_time, event.end_time) }}</div>
-              <div v-if="event.location" class="source-meta">{{ event.location }}</div>
-              <div v-if="event.instructor" class="source-meta">教师：{{ event.instructor }}</div>
-              <p v-if="event.description" class="source-desc">{{ event.description }}</p>
-            </article>
-          </div>
+            <div v-else-if="activeSourceTab === 'course-schedule'" class="source-list">
+              <div v-if="courseScheduleEvents.length" class="source-count">共 {{ courseScheduleEvents.length }} 条课程表事件</div>
+              <div v-else class="empty-state">暂无课程表数据</div>
+              <article v-for="event in courseScheduleEvents" :key="`course-${event.id}`" class="source-card">
+                <div class="source-card-head">
+                  <strong>{{ event.course_name || event.title }}</strong>
+                  <span v-if="event.course_code" class="source-tag">{{ event.course_code }}</span>
+                </div>
+                <div class="source-meta">{{ formatSourceDateRange(event.start_time, event.end_time) }}</div>
+                <div v-if="event.location" class="source-meta">{{ event.location }}</div>
+                <div v-if="event.instructor" class="source-meta">教师：{{ event.instructor }}</div>
+                <p v-if="event.description" class="source-desc">{{ event.description }}</p>
+              </article>
+            </div>
 
-          <div v-else class="source-list">
-            <div v-if="blackboardTodos.length" class="source-count">共 {{ blackboardTodos.length }} 条 Blackboard 截止事项</div>
-            <div v-else class="empty-state">暂无 Blackboard 导入数据</div>
-            <article v-for="todo in blackboardTodos" :key="`blackboard-${todo.id}`" class="source-card">
-              <div class="source-card-head">
-                <strong>{{ todo.title }}</strong>
-                <span class="source-tag blackboard-tag">deadline</span>
-              </div>
-              <div v-if="todo.deadline" class="source-meta">截止时间：{{ formatSourceDateRange(todo.deadline, todo.deadline) }}</div>
-              <p v-if="todo.content" class="source-desc">{{ todo.content }}</p>
-            </article>
+            <div v-else class="source-list">
+              <div v-if="blackboardTodos.length" class="source-count">共 {{ blackboardTodos.length }} 条 Blackboard 截止事项</div>
+              <div v-else class="empty-state">暂无 Blackboard 导入数据</div>
+              <article v-for="todo in blackboardTodos" :key="`blackboard-${todo.id}`" class="source-card">
+                <div class="source-card-head">
+                  <strong>{{ todo.title }}</strong>
+                  <span class="source-tag blackboard-tag">deadline</span>
+                </div>
+                <div v-if="todo.deadline" class="source-meta">截止时间：{{ formatSourceDateRange(todo.deadline, todo.deadline) }}</div>
+                <p v-if="todo.content" class="source-desc">{{ todo.content }}</p>
+              </article>
+            </div>
           </div>
         </section>
       </div>
@@ -266,6 +276,7 @@ const activeSourceTab = ref('official-calendar')
 const officialCalendarEvents = ref([])
 const courseScheduleEvents = ref([])
 const blackboardTodos = ref([])
+const sourcePreviewCollapsed = ref(false)
 const officialCalendarBackgroundMarkers = ref([])
 const showOfficialCalendarBackground = ref(true)
 const showBlackboardItems = ref(true)
@@ -282,6 +293,9 @@ const analysisVisible = ref(false)
 const analysisRequestVersion = ref(0)
 const analysisAiSessionId = ref(null)
 const selectedPlanId = computed(() => String(selectedPlan.value?.id || ''))
+const importedSourceItemCount = computed(() => {
+  return officialCalendarEvents.value.length + courseScheduleEvents.value.length + blackboardTodos.value.length
+})
 
 function resetAnalysisState() {
   analysisRequestVersion.value += 1
@@ -1711,12 +1725,13 @@ watch(
   display: grid;
   grid-template-columns: 380px 1fr;
   gap: 20px;
-  align-items: stretch;
+  align-items: flex-start;
 }
 
 .todo-main {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .view-switcher-panel {
@@ -1852,6 +1867,16 @@ watch(
   background: rgba(255, 255, 255, 0.84);
   border: 1px solid rgba(107, 135, 181, 0.16);
   box-shadow: 0 18px 40px rgba(79, 103, 137, 0.12);
+  height: 46vh;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.source-preview-panel.collapsed {
+  height: auto;
+  min-height: 0;
 }
 
 .source-preview-top {
@@ -1860,6 +1885,28 @@ watch(
   gap: 16px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.source-preview-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.source-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.source-preview-count {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: #edf3fb;
+  color: #47607f;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .preview-eyebrow {
@@ -1889,9 +1936,35 @@ watch(
   font-weight: 600;
 }
 
+.preview-collapse-btn {
+  border: 1px solid rgba(69, 96, 142, 0.18);
+  background: #fff;
+  color: #47607f;
+  border-radius: 999px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
 .preview-tab.active {
   background: #153e8f;
   color: #fff;
+}
+
+.source-preview-body {
+  flex: 1;
+  min-height: 0;
+  margin-top: 16px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.source-preview-body .import-summary {
+  margin-top: 0;
+}
+
+.source-preview-body > .source-list:first-child {
+  margin-top: 0;
 }
 
 .import-summary {

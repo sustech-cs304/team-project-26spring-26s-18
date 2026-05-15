@@ -658,8 +658,7 @@ function weekTypeClass(course) {
   display: grid;
   place-items: center;
   color: #9aaabd;
-  background:
-    linear-gradient(180deg, rgba(189, 222, 254, 0.75), rgba(242, 246, 251, 0.72));
+  background: rgba(255, 255, 255, 0.28);
   border: 1px dashed rgba(145, 164, 192, 0.24);
 }
 
