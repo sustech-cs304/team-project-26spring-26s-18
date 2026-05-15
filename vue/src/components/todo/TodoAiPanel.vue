@@ -31,7 +31,7 @@
             <div class="analysis-eyebrow">Schedule Analysis</div>
             <h3>优化方案提出与选择</h3>
           </div>
-          <button class="analysis-trigger" :disabled="analysisBusy" @click="emit('run-analysis')">
+          <button class="analysis-trigger" :disabled="analysisLoading" @click="emit('run-analysis')">
             {{ analysisTriggerLabel }}
           </button>
         </div>
@@ -119,7 +119,7 @@
                 候选方案基于 aggregate-analysis 的结构化结果由 AI 生成。选择后会在周历上预览建议调整，但不会保存到后端，也不会直接改写当前 Todo。
               </div>
               <div v-if="planGenerationLoading" class="analysis-card-loading">
-                正在根据检测结果生成可执行优化方案...
+                Generating AI suggestions...
               </div>
               <div v-else-if="planGenerationError" class="analysis-empty">
                 {{ planGenerationError }}
@@ -153,6 +153,25 @@
                       <span class="plan-timing">{{ item.currentTime }} → {{ item.suggestedTime }}</span>
                       <small>原因：{{ item.reason }}</small>
                       <small>预期效果：{{ item.expectedEffect }}</small>
+                      <small v-if="!canApplyPlanAdjustment(item)" class="plan-action-warning">
+                        缺少目标事项或建议时间，只能作为预览参考。
+                      </small>
+                      <div class="plan-action-controls">
+                        <button
+                          class="plan-action-btn apply"
+                          :disabled="isPlanActionBusy || !canApplyPlanAdjustment(item)"
+                          @click.stop="emit('apply-plan-adjustment', { planId: plan.id, adjustmentId: item.id })"
+                        >
+                          {{ planActionBusyId === getPlanActionBusyId(plan, item) ? '应用中...' : '应用此建议' }}
+                        </button>
+                        <button
+                          class="plan-action-btn ignore"
+                          :disabled="isPlanActionBusy"
+                          @click.stop="emit('cancel-plan-adjustment', { planId: plan.id, adjustmentId: item.id })"
+                        >
+                          忽略
+                        </button>
+                      </div>
                     </div>
                   </div>
                   <button
@@ -342,9 +361,19 @@ const props = defineProps({
     type: String,
     default: '',
   },
+  planActionBusyId: {
+    type: String,
+    default: '',
+  },
 })
 
-const emit = defineEmits(['confirm-action', 'run-analysis', 'select-plan'])
+const emit = defineEmits([
+  'confirm-action',
+  'run-analysis',
+  'select-plan',
+  'apply-plan-adjustment',
+  'cancel-plan-adjustment',
+])
 const userStore = useUserStore()
 
 const draft = ref('')
@@ -368,13 +397,8 @@ const confirmDisabled = computed(() => {
   return props.confirming || !previewAction.value?.canConfirm
 })
 
-const analysisBusy = computed(() => {
-  return props.analysisLoading || props.planGenerationLoading
-})
-
 const analysisTriggerLabel = computed(() => {
   if (props.analysisLoading) return '分析中...'
-  if (props.planGenerationLoading) return '生成方案中...'
   return 'Analyze My Schedule'
 })
 
@@ -428,6 +452,16 @@ const candidatePlans = computed(() => {
       : [],
   }))
 })
+
+const isPlanActionBusy = computed(() => Boolean(props.planActionBusyId))
+
+function getPlanActionBusyId(plan, adjustment) {
+  return `${String(plan?.id || '')}:${String(adjustment?.id || '')}`
+}
+
+function canApplyPlanAdjustment(adjustment) {
+  return adjustment?.can_apply !== false
+}
 
 watch(
   () => props.actionFeedback,
@@ -1239,6 +1273,41 @@ function confirmAction() {
   color: #c6daea;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.plan-action-warning {
+  color: #ffd7b5;
+}
+
+.plan-action-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.plan-action-btn {
+  border: none;
+  border-radius: 9px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.plan-action-btn.apply {
+  background: #d7ebff;
+  color: #12304d;
+}
+
+.plan-action-btn.ignore {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f1f8ff;
+}
+
+.plan-action-btn:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
 }
 
 .plan-select-btn {

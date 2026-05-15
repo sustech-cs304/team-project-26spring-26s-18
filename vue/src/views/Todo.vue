@@ -14,9 +14,12 @@
         :data-source-summary="dataSourceSummary"
         :ai-candidate-plans="analysisCandidatePlans"
         :selected-plan-id="selectedPlanId"
+        :plan-action-busy-id="analysisPlanActionBusyId"
         @confirm-action="handleConfirmAction"
         @run-analysis="handleRunAnalysis"
         @select-plan="handleSelectPlan"
+        @apply-plan-adjustment="handleApplyPlanAdjustment"
+        @cancel-plan-adjustment="handleCancelPlanAdjustment"
       />
 
       <div class="todo-main">
@@ -50,10 +53,13 @@
           :events="filteredCurrentWeekTodos"
           :background-markers="visibleOfficialCalendarBackgroundMarkers"
           :ai-preview-adjustments="selectedPlanPreviewAdjustments"
+          :preview-action-busy-id="analysisPlanActionBusyId"
           @change-week="changeWeek"
           @open-add="handleOpenManualAdd"
           @select-event="handleSelectEvent"
           @create-at-slot="handleCreateAtSlot"
+          @apply-preview-adjustment="handleApplyPreviewAdjustment"
+          @cancel-preview-adjustment="handleCancelPreviewAdjustment"
         >
           <template #header-extra>
             <div class="calendar-header-tools">
@@ -292,6 +298,7 @@ const selectedPlan = ref(null)
 const analysisVisible = ref(false)
 const analysisRequestVersion = ref(0)
 const analysisAiSessionId = ref(null)
+const analysisPlanActionBusyId = ref('')
 const selectedPlanId = computed(() => String(selectedPlan.value?.id || ''))
 const importedSourceItemCount = computed(() => {
   return officialCalendarEvents.value.length + courseScheduleEvents.value.length + blackboardTodos.value.length
@@ -305,6 +312,7 @@ function resetAnalysisState() {
   analysisVisible.value = false
   analysisLoading.value = false
   analysisPlanLoading.value = false
+  analysisPlanActionBusyId.value = ''
   analysisCandidatePlans.value = []
   selectedPlan.value = null
 }
@@ -691,6 +699,12 @@ function normalizePreviewDateTime(value) {
   return `${match[1]}T${match[2]}:${match[3] || '00'}`
 }
 
+function normalizePreviewEventId(value) {
+  if (value === null || value === undefined || value === '') return null
+  const numericValue = Number(value)
+  return Number.isFinite(numericValue) ? numericValue : String(value)
+}
+
 function parsePreviewRangeText(value) {
   const normalized = cleanInlineText(value).replace(/^截止\s*/, '')
   if (!normalized) return null
@@ -766,6 +780,8 @@ function buildAnalysisPreviewCandidates(aggregateResult) {
       previewCandidates.push({
         id: `reschedule-${suggestionIndex}-${optionIndex}`,
         preview_type: 'reschedule',
+        apply_action: 'update_todo',
+        target_event_id: normalizePreviewEventId(option.target_event_id),
         item_title: targetEvent.title,
         match_titles: [targetEvent.title],
         current_time: targetEvent.current_time || '',
@@ -789,6 +805,9 @@ function buildAnalysisPreviewCandidates(aggregateResult) {
       previewCandidates.push({
         id: `focus-${suggestionIndex}-${optionIndex}`,
         preview_type: 'focus_block',
+        apply_action: 'create_focus_block',
+        target_event_id: null,
+        intended_event_ids: (option.intended_for_event_ids || []).map(normalizePreviewEventId).filter((eventId) => eventId !== null),
         item_title: intendedTitles.join(' / '),
         match_titles: intendedTitles,
         current_time: intendedItems.map((item) => item.current_time).filter(Boolean).join(' / '),
@@ -821,6 +840,8 @@ function buildAnalysisPreviewCandidates(aggregateResult) {
       previewCandidates.push({
         id: `split-${suggestionIndex}-${optionIndex}`,
         preview_type: 'split',
+        apply_action: 'split_todo',
+        target_event_id: normalizePreviewEventId(option.target_event_id),
         item_title: targetEvent.title,
         match_titles: [targetEvent.title],
         current_time: targetEvent.current_time || '',
@@ -913,16 +934,17 @@ function buildAiPlanPrompt(aggregateResult) {
     '优先复用 suggestions 里的候选时间、focus block、split option 和 ai_context 信息，生成具体可执行的调整方案。',
     '请返回严格 JSON，不要返回 markdown，不要返回解释，不要返回代码块。',
     'JSON 必须严格符合以下结构：',
-    '{"plans":[{"id":"kebab-case-id","name":"方案名称","goal":"方案优先目标","summary":"方案概述","adjustments":[{"item_title":"事项标题","current_time":"当前时间","suggested_time":"建议时间","reason":"调整原因","expected_effect":"预期效果","preview_type":"move","original_start":"2026-04-16T09:00:00","original_end":"2026-04-16T10:00:00","suggested_start":"2026-04-16T11:00:00","suggested_end":"2026-04-16T12:00:00","suggested_segments":[]}]}]}',
+    '{"plans":[{"id":"kebab-case-id","name":"方案名称","goal":"方案优先目标","summary":"方案概述","adjustments":[{"target_event_id":123,"item_title":"事项标题","current_time":"当前时间","suggested_time":"建议时间","reason":"调整原因","expected_effect":"预期效果","preview_type":"move","original_start":"2026-04-16T09:00:00","original_end":"2026-04-16T10:00:00","suggested_start":"2026-04-16T11:00:00","suggested_end":"2026-04-16T12:00:00","suggested_segments":[]}]}]}',
     '硬性要求：',
     '1. 返回 2 到 3 个 plan。',
     '2. 每个 plan 必须包含 2 到 4 个 adjustments，且 adjustments 必须具体、可执行、时间明确。',
     '3. item_title 必须来自输入中的真实事项标题；current_time 和 suggested_time 必须是北京时间的人类可读时间。',
     '4. preview_type 必须是 move、focus_block、split、reschedule 之一。',
     '5. original_start、original_end、suggested_start、suggested_end、suggested_segments 必须直接复用输入 JSON 中已经提供的精确时间；不要自造新时间。',
-    '6. 如果某个 adjustment 没有 original_start/original_end，就返回 null；split 类型请在 suggested_segments 中返回所有拆分片段，每个片段使用 {"start":"...","end":"..."}。',
-    '7. goal 和 summary 要体现该方案的优化重点，但不能只是泛泛的策略标签。',
-    '8. 如果输入里没有足够依据，就不要编造；请优先选择已有候选时间最明确的事项。',
+    '6. 如果输入候选项提供了 target_event_id，必须原样返回；focus_block 没有单个目标时可返回 null。',
+    '7. 如果某个 adjustment 没有 original_start/original_end，就返回 null；split 类型请在 suggested_segments 中返回所有拆分片段，每个片段使用 {"start":"...","end":"..."}。',
+    '8. goal 和 summary 要体现该方案的优化重点，但不能只是泛泛的策略标签。',
+    '9. 如果输入里没有足够依据，就不要编造；请优先选择已有候选时间最明确的事项。',
     `分析输入 JSON：${JSON.stringify(promptPayload)}`,
   ].join('\n')
 }
@@ -977,9 +999,31 @@ function normalizeAiPlanAdjustment(rawAdjustment, index, previewCandidates = [])
     suggestedStart,
     suggestedEnd
   )
+  const targetEventId = normalizePreviewEventId(
+    rawAdjustment?.target_event_id
+    ?? rawAdjustment?.todo_id
+    ?? matchedPreview?.target_event_id
+  )
+  const applyAction = matchedPreview?.apply_action
+    || (previewType === 'focus_block' && targetEventId === null
+      ? 'create_focus_block'
+      : previewType === 'split'
+        ? 'split_todo'
+        : 'update_todo')
+  const hasSuggestedRange = Boolean(suggestedStart && suggestedEnd)
+  const hasSuggestedSegments = suggestedSegments.some((segment) => segment?.suggested_start && segment?.suggested_end)
+  const canApply = applyAction === 'create_focus_block'
+    ? hasSuggestedRange
+    : applyAction === 'split_todo'
+      ? Boolean(targetEventId !== null && (hasSuggestedSegments || hasSuggestedRange))
+      : Boolean(targetEventId !== null && hasSuggestedRange)
 
   return {
     id: `adjustment-${index + 1}-${itemTitle}`,
+    target_event_id: targetEventId,
+    intended_event_ids: Array.isArray(matchedPreview?.intended_event_ids) ? matchedPreview.intended_event_ids : [],
+    apply_action: applyAction,
+    can_apply: canApply,
     item_title: itemTitle,
     current_time: currentTime,
     suggested_time: suggestedTime,
@@ -1088,6 +1132,26 @@ async function generateAiCandidatePlans(aggregateResult) {
     throw new Error('未收到有效的 AI 优化方案回复')
   }
   return parseAiCandidatePlansResponse(assistantMessage.content, aggregateResult)
+}
+
+async function startAiCandidatePlanGeneration(aggregateResult, requestVersion) {
+  analysisPlanLoading.value = true
+  analysisPlanError.value = ''
+
+  try {
+    const plans = await generateAiCandidatePlans(aggregateResult)
+    if (requestVersion !== analysisRequestVersion.value) return
+    analysisCandidatePlans.value = plans
+  } catch (error) {
+    if (requestVersion !== analysisRequestVersion.value) return
+    analysisCandidatePlans.value = []
+    analysisPlanError.value = error.message || 'AI 候选优化方案生成失败'
+    ElMessage.warning(error.message || 'AI 候选优化方案生成失败')
+  } finally {
+    if (requestVersion === analysisRequestVersion.value) {
+      analysisPlanLoading.value = false
+    }
+  }
 }
 
 function buildDefaultImportForm(sourceType = 'official-calendar') {
@@ -1253,6 +1317,9 @@ function buildSelectedPlanPreviewAdjustments(plan) {
         id: `${plan.id}-${adjustment.id}-${segmentIndex + 1}`,
         plan_id: plan.id,
         adjustment_id: adjustment.id,
+        target_event_id: adjustment.target_event_id,
+        apply_action: adjustment.apply_action,
+        can_apply: adjustment.can_apply,
         item_title: adjustment.item_title,
         original_start: adjustment.original_start || '',
         original_end: adjustment.original_end || '',
@@ -1471,6 +1538,7 @@ async function handleRunAnalysis() {
   analysisPlanLoading.value = false
   analysisError.value = ''
   analysisPlanError.value = ''
+  analysisPlanActionBusyId.value = ''
   analysisCandidatePlans.value = []
   selectedPlan.value = null
 
@@ -1503,21 +1571,7 @@ async function handleRunAnalysis() {
     return
   }
 
-  analysisPlanLoading.value = true
-  try {
-    const plans = await generateAiCandidatePlans(nextAggregateAnalysis)
-    if (requestVersion !== analysisRequestVersion.value) return
-    analysisCandidatePlans.value = plans
-  } catch (error) {
-    if (requestVersion !== analysisRequestVersion.value) return
-    analysisCandidatePlans.value = []
-    analysisPlanError.value = error.message || 'AI 候选优化方案生成失败'
-    ElMessage.error(error.message || 'AI 候选优化方案生成失败')
-  } finally {
-    if (requestVersion === analysisRequestVersion.value) {
-      analysisPlanLoading.value = false
-    }
-  }
+  void startAiCandidatePlanGeneration(nextAggregateAnalysis, requestVersion)
 }
 
 function handleSelectPlan(plan) {
@@ -1533,6 +1587,238 @@ function handleSelectPlan(plan) {
   }
 
   selectedPlan.value = analysisCandidatePlans.value.find((item) => String(item.id) === nextPlanId) || plan
+}
+
+function getPlanActionBusyId(planId, adjustmentId) {
+  return `${String(planId)}:${String(adjustmentId)}`
+}
+
+function findAnalysisPlan(planId) {
+  return analysisCandidatePlans.value.find((plan) => String(plan.id) === String(planId)) || null
+}
+
+function findAnalysisAdjustment(planId, adjustmentId) {
+  const plan = findAnalysisPlan(planId)
+  if (!plan) return null
+  const adjustment = (plan.adjustments || []).find((item) => String(item.id) === String(adjustmentId)) || null
+  return adjustment ? { plan, adjustment } : null
+}
+
+function syncSelectedPlanAfterCandidateChange(planId) {
+  if (String(selectedPlan.value?.id || '') !== String(planId)) return
+  selectedPlan.value = findAnalysisPlan(planId)
+}
+
+function removeAnalysisAdjustment(planId, adjustmentId) {
+  analysisCandidatePlans.value = analysisCandidatePlans.value
+    .map((plan) => {
+      if (String(plan.id) !== String(planId)) return plan
+      return {
+        ...plan,
+        adjustments: (plan.adjustments || []).filter((item) => String(item.id) !== String(adjustmentId)),
+      }
+    })
+    .filter((plan) => plan.adjustments?.length)
+  syncSelectedPlanAfterCandidateChange(planId)
+}
+
+function findTodoById(todoId) {
+  return allTodos.value.find((todo) => String(todo.id) === String(todoId)) || null
+}
+
+function getAdjustmentSegments(adjustment) {
+  const rawSegments = Array.isArray(adjustment?.suggested_segments) && adjustment.suggested_segments.length
+    ? adjustment.suggested_segments
+    : adjustment?.suggested_start
+      ? [{
+        suggested_start: adjustment.suggested_start,
+        suggested_end: adjustment.suggested_end,
+      }]
+      : []
+
+  return rawSegments.map((segment) => ({
+    suggested_start: segment?.suggested_start || '',
+    suggested_end: segment?.suggested_end || '',
+  })).filter((segment) => segment.suggested_start && segment.suggested_end)
+}
+
+function buildSuggestedRangePayload(adjustment, segment = null) {
+  const suggestedStart = segment?.suggested_start || adjustment?.suggested_start || ''
+  const suggestedEnd = segment?.suggested_end || adjustment?.suggested_end || ''
+  if (!suggestedStart || !suggestedEnd) {
+    throw new Error('这条 AI 建议缺少可执行的开始或结束时间')
+  }
+  return {
+    start_time: suggestedStart,
+    end_time: suggestedEnd,
+  }
+}
+
+function buildAiSuggestionContent(adjustment, prefix = 'AI 日程分析建议') {
+  return [
+    prefix,
+    adjustment?.reason ? `原因：${adjustment.reason}` : '',
+    adjustment?.expected_effect ? `预期效果：${adjustment.expected_effect}` : '',
+  ].filter(Boolean).join('\n')
+}
+
+function buildFocusBlockPayload(adjustment) {
+  const rangePayload = buildSuggestedRangePayload(adjustment)
+  const titleBase = `专注：${adjustment.item_title || 'AI 建议事项'}`
+  return {
+    title: titleBase.slice(0, 255),
+    content: buildAiSuggestionContent(adjustment),
+    priority: 2,
+    status: 'pending',
+    deadline: null,
+    ...rangePayload,
+  }
+}
+
+function buildSplitSegmentPayload(targetTodo, adjustment, segment, segmentIndex) {
+  return {
+    title: `${targetTodo.title}（拆分 ${segmentIndex + 1}）`.slice(0, 255),
+    content: buildAiSuggestionContent(adjustment, targetTodo.content || 'AI 拆分建议'),
+    priority: targetTodo.priority ?? 2,
+    status: targetTodo.status || 'pending',
+    deadline: null,
+    ...buildSuggestedRangePayload(adjustment, segment),
+  }
+}
+
+async function refreshAnalysisAfterAiSuggestionMutation(mutatedTodos = []) {
+  await loadTodos()
+  if (mutatedTodos.some((todo) => isImportedBlackboardTodo(todo))) {
+    await loadBlackboardTodosOnly()
+  }
+
+  try {
+    const result = await getScheduleAggregateAnalysis({
+      start_time: currentWeekQueryRange.value.start_time,
+      end_time: currentWeekQueryRange.value.end_time,
+      include_blackboard: true,
+      include_background_markers: true,
+      include_completed: false,
+      include_course_schedule: true,
+    })
+    aggregateAnalysis.value = result?.data || null
+    analysisVisible.value = true
+    analysisError.value = ''
+  } catch (error) {
+    ElMessage.warning(error.message || 'Todo 已更新，但分析摘要刷新失败')
+  }
+}
+
+async function persistAnalysisAdjustment(adjustment) {
+  if (adjustment?.can_apply === false) {
+    throw new Error('这条 AI 建议缺少可执行的目标事项或建议时间')
+  }
+
+  if (adjustment.apply_action === 'create_focus_block') {
+    const payload = buildFocusBlockPayload(adjustment)
+    const conflictTodo = findRangeConflict(payload)
+    if (conflictTodo) {
+      throw new Error(getRangeConflictMessage(conflictTodo))
+    }
+    const result = await createTodo(payload)
+    return [result?.data || payload]
+  }
+
+  const targetTodo = findTodoById(adjustment.target_event_id)
+  if (!targetTodo) {
+    throw new Error('找不到这条 AI 建议对应的 Todo，无法执行')
+  }
+
+  if (adjustment.apply_action === 'split_todo') {
+    const segments = getAdjustmentSegments(adjustment)
+    if (!segments.length) {
+      throw new Error('这条拆分建议缺少可执行的时间段')
+    }
+
+    const firstPayload = buildSuggestedRangePayload(adjustment, segments[0])
+    const firstConflict = findRangeConflict(firstPayload, { excludeTodoId: targetTodo.id })
+    if (firstConflict) {
+      throw new Error(getRangeConflictMessage(firstConflict))
+    }
+
+    const firstResult = await updateTodo(targetTodo.id, firstPayload)
+    const mutatedTodos = [firstResult?.data ? { ...targetTodo, ...firstResult.data } : { ...targetTodo, ...firstPayload }]
+
+    for (const [index, segment] of segments.slice(1).entries()) {
+      const payload = buildSplitSegmentPayload(targetTodo, adjustment, segment, index + 1)
+      const conflictTodo = findRangeConflict(payload, { excludeTodoId: targetTodo.id })
+      if (conflictTodo) {
+        throw new Error(getRangeConflictMessage(conflictTodo))
+      }
+      const result = await createTodo(payload)
+      mutatedTodos.push(result?.data || payload)
+    }
+
+    return mutatedTodos
+  }
+
+  const payload = buildSuggestedRangePayload(adjustment)
+  const conflictTodo = findRangeConflict(payload, { excludeTodoId: targetTodo.id })
+  if (conflictTodo) {
+    throw new Error(getRangeConflictMessage(conflictTodo))
+  }
+  const result = await updateTodo(targetTodo.id, payload)
+  return [result?.data ? { ...targetTodo, ...result.data } : { ...targetTodo, ...payload }]
+}
+
+async function handleApplyPlanAdjustment({ planId, adjustmentId }) {
+  const match = findAnalysisAdjustment(planId, adjustmentId)
+  if (!match) {
+    ElMessage.warning('这条 AI 建议已经不存在')
+    return
+  }
+
+  const busyId = getPlanActionBusyId(planId, adjustmentId)
+  if (analysisPlanActionBusyId.value) return
+
+  analysisPlanActionBusyId.value = busyId
+  try {
+    const mutatedTodos = await persistAnalysisAdjustment(match.adjustment)
+    removeAnalysisAdjustment(planId, adjustmentId)
+    await refreshAnalysisAfterAiSuggestionMutation(mutatedTodos)
+    ElMessage.success('AI 建议已应用')
+  } catch (error) {
+    ElMessage.error(error.message || '应用 AI 建议失败')
+  } finally {
+    if (analysisPlanActionBusyId.value === busyId) {
+      analysisPlanActionBusyId.value = ''
+    }
+  }
+}
+
+function handleCancelPlanAdjustment({ planId, adjustmentId }) {
+  if (analysisPlanActionBusyId.value) return
+  const match = findAnalysisAdjustment(planId, adjustmentId)
+  if (!match) return
+  removeAnalysisAdjustment(planId, adjustmentId)
+  ElMessage.info('已忽略该 AI 建议')
+}
+
+function buildPreviewAdjustmentAction(preview) {
+  return {
+    planId: preview?.plan_id || '',
+    adjustmentId: preview?.adjustment_id || '',
+  }
+}
+
+async function handleApplyPreviewAdjustment(preview) {
+  const action = buildPreviewAdjustmentAction(preview)
+  if (!action.planId || !action.adjustmentId) {
+    ElMessage.warning('这条预览缺少可执行的 AI 建议信息')
+    return
+  }
+  await handleApplyPlanAdjustment(action)
+}
+
+function handleCancelPreviewAdjustment(preview) {
+  const action = buildPreviewAdjustmentAction(preview)
+  if (!action.planId || !action.adjustmentId) return
+  handleCancelPlanAdjustment(action)
 }
 
 async function handleConfirmAction(actionDraft) {
