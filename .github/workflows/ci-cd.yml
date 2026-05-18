@@ -7,9 +7,45 @@ on:
     branches: [ main ]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    name: 代码检查
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: vue/package-lock.json
+      
+      - name: 安装前端依赖
+        run: npm install
+        working-directory: ./vue
+      
+      - name: 前端代码检查
+        run: npm run lint
+        working-directory: ./vue
+      
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: python_demo/requirements.txt
+      
+      - name: 安装 Python lint 工具
+        run: pip install flake8
+      
+      - name: 后端代码检查
+        run: flake8 --max-line-length=120 .
+        working-directory: ./python_demo
+
   frontend-build:
     runs-on: ubuntu-latest
     name: 前端构建
+    needs: lint
     steps:
       - uses: actions/checkout@v4
       
@@ -27,16 +63,11 @@ jobs:
       - name: 前端构建
         run: npm run build
         working-directory: ./vue
-      
-      - name: 上传前端构建产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-dist
-          path: vue/dist/
 
   backend-test:
     runs-on: ubuntu-latest
     name: 后端测试
+    needs: lint
     services:
       mysql:
         image: mysql:8.0
@@ -93,78 +124,3 @@ jobs:
         run: python -m pytest tests/ -v --tb=short
         working-directory: ./python_demo
         continue-on-error: true
-
-  docker-build:
-    runs-on: ubuntu-latest
-    name: Docker 镜像构建
-    needs: [frontend-build, backend-test]
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: 下载前端构建产物
-        uses: actions/download-artifact@v4
-        with:
-          name: frontend-dist
-          path: vue/dist/
-      
-      - name: 设置 Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      - name: 登录 Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
-      
-      - name: 构建并推送前端镜像
-        uses: docker/build-push-action@v5
-        with:
-          context: ./vue
-          file: ./vue/Dockerfile
-          push: true
-          tags: |
-            ${{ secrets.DOCKER_HUB_USERNAME }}/spa-frontend:latest
-            ${{ secrets.DOCKER_HUB_USERNAME }}/spa-frontend:${{ github.sha }}
-      
-      - name: 构建并推送后端镜像
-        uses: docker/build-push-action@v5
-        with:
-          context: ./python_demo
-          file: ./python_demo/Dockerfile
-          push: true
-          tags: |
-            ${{ secrets.DOCKER_HUB_USERNAME }}/spa-backend:latest
-            ${{ secrets.DOCKER_HUB_USERNAME }}/spa-backend:${{ github.sha }}
-
-  lint:
-    runs-on: ubuntu-latest
-    name: 代码检查
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: 设置 Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20.x'
-      
-      - name: 安装前端依赖
-        run: npm install
-        working-directory: ./vue
-      
-      - name: 前端代码检查
-        run: npm run lint
-        working-directory: ./vue
-      
-      - name: 设置 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      
-      - name: 安装 Python lint 工具
-        run: pip install flake8
-      
-      - name: 后端代码检查
-        run: flake8 --max-line-length=120 .
-        working-directory: ./python_demo
