@@ -45,9 +45,7 @@ rich==14.2.0
 rich-toolkit==0.17.1
 click==8.2.1
 shellingham==1.5.4
-typer==0.20.0
-typer-slim==0.20.0
-typer-slim-standard==0.20.0
+typer==0.12.3
 pydantic-core==2.41.5
 pydantic-extra-types==2.11.0
 pydantic-settings==2.12.0
