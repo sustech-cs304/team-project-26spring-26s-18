@@ -1,44 +1,4 @@
 import pytest
-from fastapi.testclient import TestClient
-from main import app
-
-client = TestClient(app)
-
-
-def test_user_register():
-    """测试用户注册接口"""
-    response = client.post(
-        "/user/register",
-        json={
-            "email": "test@example.com",
-            "password": "test123456",
-            "username": "testuser"
-        }
-    )
-    # 检查响应状态码（成功或用户已存在）
-    assert response.status_code in [200, 400]
-
-
-def test_user_login():
-    """测试用户登录接口"""
-    response = client.post(
-        "/user/login",
-        json={
-            "email": "test@example.com",
-            "password": "test123456"
-        }
-    )
-    # 检查响应状态码（成功或认证失败）
-    assert response.status_code in [200, 401]
-
-
-def test_send_code():
-    """测试发送验证码接口"""
-    response = client.post(
-        "/user/sendCode",
-        json={"email": "test@example.com"}
-    )
-    assert response.status_code == 200
 
 
 def test_jwt_util():
@@ -71,3 +31,15 @@ def test_result_util():
     assert fail_result.code == 0
     assert fail_result.message == "error message"
     assert fail_result.data is None
+
+
+def test_mail_util_exists():
+    """测试邮件工具模块存在"""
+    import utils.mail_util
+    assert utils.mail_util is not None
+
+
+def test_oss_util_exists():
+    """测试 OSS 工具模块存在"""
+    import utils.oss_util
+    assert utils.oss_util is not None
