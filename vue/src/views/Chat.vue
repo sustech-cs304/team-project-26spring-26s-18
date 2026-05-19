@@ -286,9 +286,10 @@
                 <div class="category-header">
                   <span class="category-icon">🌐</span>
                   <span class="category-title">推荐学习资源</span>
+                  <span v-if="message.web.length > 3" class="category-badge">{{ message.web.length }}条</span>
                 </div>
-                <div class="web-links">
-                  <div v-for="(link, idx) in message.web.slice(0, 3)" :key="'web'+idx" class="web-link-item">
+                <div class="web-links" :class="{ 'expanded': isWebExpanded(message.id) }">
+                  <div v-for="(link, idx) in getDisplayedWebLinks(message)" :key="'web'+idx" class="web-link-item">
                     <!-- 主链接：尝试直接访问 -->
                     <a :href="link.url" target="_blank" rel="noopener noreferrer" class="web-link-main">
                       <span class="web-link-title">{{ link.title }}</span>
@@ -313,6 +314,14 @@
                     </a>
                   </div>
                 </div>
+                <!-- 展开/收起按钮 -->
+                <button 
+                  v-if="message.web.length > 3" 
+                  @click="toggleWebExpand(message.id)"
+                  class="web-expand-btn"
+                >
+                  {{ isWebExpanded(message.id) ? '🔼 收起' : '🔽 展开更多 (' + (message.web.length - 3) + '条)' }}
+                </button>
               </div>
 
               <!-- 会话中的链接 -->
@@ -458,6 +467,9 @@ const selectedFiles = ref([])
 const selectedMode = ref('default') // 默认模式
 const loadingResources = ref(false)
 const committedSpeechTranscript = ref('')
+
+// 存储展开了网络资源的 message id
+const webExpandedIds = ref(new Set())
 
 const {
   isSupported: isSpeechSupported,
@@ -913,6 +925,25 @@ async function deleteSession(sessionId) {
     console.error('删除会话失败:', error)
   }
   }
+}
+
+// 网络资源展开/收起控制
+function isWebExpanded(messageId) {
+  return webExpandedIds.value.has(messageId)
+}
+
+function toggleWebExpand(messageId) {
+  if (webExpandedIds.value.has(messageId)) {
+    webExpandedIds.value.delete(messageId)
+  } else {
+    webExpandedIds.value.add(messageId)
+  }
+}
+
+function getDisplayedWebLinks(message) {
+  if (!message.web) return []
+  const expanded = isWebExpanded(message.id)
+  return expanded ? message.web : message.web.slice(0, 3)
 }
 
 // 监听语音识别最终文本并追加到输入框
@@ -1878,6 +1909,40 @@ onMounted(() => {
 
 .web-link-fallback:hover {
   background: #bbdefb;
+}
+
+/* 展开/收起按钮 */
+.web-expand-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 16px;
+  background: #f5f5f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.web-expand-btn:hover {
+  background: #eeeeee;
+  border-color: #bdbdbd;
+  color: #333;
+}
+
+/* 网络资源区域展开后的最大高度限制（可选滚动） */
+.web-links {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.web-links.expanded {
+  max-height: 600px;
 }
 
 .session-links {

@@ -21,9 +21,7 @@ from config.db_config import get_db
 from utils.ai_util import ai_chat, ai_chat_stream
 from fastapi.responses import StreamingResponse
 from models.session import Session as SessionModel, SessionContent
-from utils.recommend_resources_util import extract_session_links, search_rag_sources
-from utils.ai_resource_recommender import generate_resource_recommendations
-from utils.url_verifier import verify_and_get_urls
+from utils.recommend_resources_util import extract_session_links, resolve_recommend_context
 
 router = APIRouter(prefix="/session", tags=["session"])
 
@@ -144,7 +142,7 @@ async def api_create_ai_content_stream_more_history_no_rag(
             yield chunk
     return StreamingResponse(event_generator(), media_type="text/plain")
 
-# 新增流式接口：推荐模式专用，精简回复
+# 推荐模式流式接口：正常回复，与资源卡片共用检索逻辑
 @router.post("/aicontent/stream_recommend")
 async def api_create_ai_content_stream_recommend(
     session_id: int = Body(..., embed=True),
@@ -223,107 +221,20 @@ async def api_recommend_resources(
     if not q:
         return Result.error("请输入检索内容，或选择会话后由系统取您最后一条文字消息作为检索词")
 
-    # 1. 知识库检索
-    rag_result = search_rag_sources(q, top_k=15, score_threshold=0.15)
-
-    has_local = len(rag_result.get("all", [])) > 0
-    
-    # 2. 如果本地资源不足，使用 AI 生成推荐资源
-    web_results = []
-    has_web = False
-
-    # 当本地资源少于3个时，使用 AI 生成推荐
-    local_count = len(rag_result.get("all", []))
-    if local_count < 3:
-        print(f"[api_recommend_resources] 本地资源仅 {local_count} 个，使用 AI 生成推荐...")
-        try:
-            ai_recommendations = await generate_resource_recommendations(q, rag_result.get("all", []))
-            # 验证前3个推荐的真实 URL
-            if ai_recommendations:
-                print(f"[api_recommend_resources] 开始验证 {min(3, len(ai_recommendations))} 个资源的 URL...")
-                ai_recommendations = verify_and_get_urls(ai_recommendations, max_verify=3)
-            # 将 AI 推荐转换为 web 格式
-            for rec in ai_recommendations[:5]:
-                title = rec.get("title", "") or ""
-                url = rec.get("url", "") or ""
-                platform = rec.get("platform", "") or ""
-                desc = rec.get("description", "") or ""
-                course_slug = rec.get("course_slug", "") or ""
-
-                # 分析 URL 类型
-                is_specific_url = False
-                is_search_url = "bing.com" in url.lower() or "search" in url.lower()
-
-                # 如果 URL 包含具体课程路径（如 /learn/ /course/ /video/），认为是具体 URL
-                if any(x in url.lower() for x in ["/learn/", "/course/", "/video/", "github.com/", "/tutorial/", "/doc/"]):
-                    is_specific_url = True
-
-                # 构建备用搜索链接
-                search_query = f"{title} {platform}".replace(" ", "+").replace("&", "%26")[:150]
-                search_url = f"https://www.bing.com/search?q={search_query}"
-
-                # 如果 AI 没提供 URL 或提供的是搜索链接，尝试构建标准格式的 URL
-                if not url or is_search_url:
-                    # 根据平台和 course_slug 构建可能的 URL
-                    if course_slug:
-                        if "coursera" in platform.lower():
-                            url = f"https://www.coursera.org/learn/{course_slug}"
-                            is_specific_url = True
-                        elif "edx" in platform.lower():
-                            url = f"https://www.edx.org/course/{course_slug}"
-                            is_specific_url = True
-                        elif "bilibili" in platform.lower() or "b站" in platform.lower():
-                            # B站使用搜索链接
-                            url = f"https://search.bilibili.com/all?keyword={course_slug}"
-                        elif "github" in platform.lower():
-                            url = f"https://github.com/search?q={course_slug}&type=repositories"
-                    else:
-                        url = search_url
-
-                # 检查 URL 是否经过搜索验证
-                url_verified = rec.get('url_verified', False)
-                original_url = rec.get('original_url', url)
-
-                # 构建详细的 snippet
-                snippet_parts = []
-                snippet_parts.append(f"[{rec.get('type', 'resource').upper()}]")
-                if platform:
-                    verified_mark = "✓" if url_verified else ""
-                    snippet_parts.append(f"平台: {platform} {verified_mark}")
-                if desc:
-                    snippet_parts.append(desc)
-                snippet_parts.append(f"难度: {rec.get('difficulty', 'unknown')}")
-
-                web_results.append({
-                    "title": title,
-                    "url": url,
-                    "snippet": " | ".join(snippet_parts),
-                    "source": "ai-generated",
-                    "platform": platform,
-                    "description": desc,
-                    "difficulty": rec.get('difficulty', 'unknown'),
-                    "is_specific_url": is_specific_url or url_verified,
-                    "url_verified": url_verified,
-                    "search_url": search_url  # 备用搜索链接
-                })
-            has_web = len(web_results) > 0
-            print(f"[api_recommend_resources] AI 生成 {len(web_results)} 个推荐")
-        except Exception as e:
-            print(f"[api_recommend_resources] AI 生成推荐失败: {e}")
-    
-    # 判断是否应该展示推荐卡片（有本地资源或网络资源即可展示）
-    should_show = has_local or has_web
+    ctx = await resolve_recommend_context(q)
 
     return Result.success({
-        "query_used": q,
-        "should_show_recommendation": should_show,
-        "lecture": rag_result.get("lecture", []),
-        "exercise": rag_result.get("exercise", []),
-        "reference": rag_result.get("reference", []),
-        "other": rag_result.get("other", []),
-        "web": web_results,
-        "has_local": has_local,
-        "has_web": has_web,
+        "query_used": ctx.get("query_used", q),
+        "should_show_recommendation": ctx.get("should_show_recommendation", False),
+        "lecture": ctx.get("lecture", []),
+        "exercise": ctx.get("exercise", []),
+        "reference": ctx.get("reference", []),
+        "other": ctx.get("other", []),
+        "web": ctx.get("web", []),
+        "has_local": ctx.get("has_local", False),
+        "has_web": ctx.get("has_web", False),
+        "cot_reason": ctx.get("cot_reason", ""),
+        "search_plan": ctx.get("search_plan"),
         "session_links": session_links,
     })
 

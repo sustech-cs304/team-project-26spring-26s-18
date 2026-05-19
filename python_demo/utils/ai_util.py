@@ -524,7 +524,7 @@ async def ai_chat_stream_less_history_more_rag(
     ai_msg = await create_content(db, session_id, "assistant", full_reply, content_type="text")
     print(f"[ai_chat_stream] AI回复已存储，长度: {len(full_reply)}")
 
-# 推荐模式专用流式接口：精简回复
+# 推荐模式专用流式接口：正常长度回复 + 与资源卡片统一的检索上下文
 async def ai_chat_stream_recommend(
     db,
     session_id: int,
@@ -535,16 +535,16 @@ async def ai_chat_stream_recommend(
 ):
     """
     推荐模式专用AI对话接口（流式）。
-    特点：回复精简，适合与资源推荐卡片配合使用。
+    与 /recommend/resources 共用 resolve_recommend_context，并结合卡片说明作答。
     """
     msg_content = []
     user_msgs = []
 
     t0 = time.time()
     print(f"[ai_chat_stream_recommend] step0: 开始, t={t0}")
-    # 1. 查询历史消息（最近3条，保持简短）
+    # 1. 查询历史消息（与普通模式一致）
     t1 = time.time()
-    history_msgs = await get_last_n_content_by_session_id(db, session_id, n=3)
+    history_msgs = await get_last_n_content_by_session_id(db, session_id, n=5)
     t2 = time.time()
     print(f"[ai_chat_stream_recommend] step1: 查询历史消息耗时: {t2-t1:.2f}s")
     history_contents = []
@@ -600,100 +600,23 @@ async def ai_chat_stream_recommend(
     print(f"[ai_chat_stream_recommend] step3: 处理文件耗时: {t5-t4:.2f}s")
     msg_content.append({"type": "text", "text": content})
 
-    # 3. 同时进行向量数据库检索和网络搜索
+    # 3. 统一推荐上下文（与资源卡片接口一致：CoT 过滤 + 国内搜索）
     t6 = time.time()
-    related_context = []
-    web_resources = []
+    from utils.recommend_resources_util import resolve_recommend_context, build_recommend_prompt_messages
 
-    # 3.1 向量数据库检索
-    try:
-        embedding_service = EmbeddingService()
-        vector_store = VectorStore()
-        t6_1 = time.time()
-        query_embedding = embedding_service.embed(content)
-        t6_2 = time.time()
-        print(f"[ai_chat_stream_recommend] step4: query embedding耗时: {t6_2-t6_1:.2f}s")
-        related = vector_store.search(query_embedding, top_k=5)
-        t6_3 = time.time()
-        print(f"[ai_chat_stream_recommend] step5: 向量检索耗时: {t6_3-t6_2:.2f}s")
-
-        has_knowledge_base_content = len(related) > 0 and any(r.get('score', 0) > 0.3 for r in related)
-
-        if has_knowledge_base_content:
-            related_context.append({
-                "role": "system",
-                "content": [{"type": "text", "text": "[知识库检索结果] 找到以下相关内容："}]
-            })
-            for i, chunk in enumerate(related[:3], 1):
-                if chunk.get('score', 0) > 0.3:
-                    related_context.append({
-                        "role": "system",
-                        "content": [{"type": "text", "text": f"{i}. 来源：{chunk.get('source', '未知')} | 相关内容：{chunk.get('content', '')[:300]}..."}]
-                    })
-        else:
-            related_context.append({
-                "role": "system",
-                "content": [{"type": "text", "text": "[知识库检索结果] 未在知识库中找到相关内容。"}]
-            })
-    except Exception as e:
-        print(f"[ai_chat_stream_recommend] 向量检索失败: {e}")
-        has_knowledge_base_content = False
-        related_context.append({
-            "role": "system",
-            "content": [{"type": "text", "text": "[知识库检索结果] 知识库检索失败。"}]
-        })
-
-    # 3.2 网络搜索
-    try:
-        from utils.recommend_resources_util import search_web_duckduckgo
-        web_results = search_web_duckduckgo(content, max_items=5)
-        t6_4 = time.time()
-        print(f"[ai_chat_stream_recommend] step5b: 网络搜索耗时: {t6_4-t6_3:.2f}s")
-
-        if web_results:
-            web_resources.append({
-                "role": "system",
-                "content": [{"type": "text", "text": "[网络搜索资源] 找到以下相关网页："}]
-            })
-            for i, result in enumerate(web_results[:3], 1):
-                web_resources.append({
-                    "role": "system",
-                    "content": [{"type": "text", "text": f"{i}. {result.get('title', '无标题')} - {result.get('url', '')}\n摘要：{result.get('snippet', '无摘要')[:150]}"}]
-                })
-        else:
-            web_resources.append({
-                "role": "system",
-                "content": [{"type": "text", "text": "[网络搜索资源] 未找到相关网络资源。"}]
-            })
-    except Exception as e:
-        print(f"[ai_chat_stream_recommend] 网络搜索失败: {e}")
-        web_resources.append({
-            "role": "system",
-            "content": [{"type": "text", "text": "[网络搜索资源] 网络搜索失败。"}]
-        })
-
+    recommend_ctx = await resolve_recommend_context(content)
+    recommend_msgs = build_recommend_prompt_messages(recommend_ctx)
     t7 = time.time()
-    print(f"[ai_chat_stream_recommend] step6: 检索总耗时: {t7-t6:.2f}s")
+    print(
+        f"[ai_chat_stream_recommend] 统一检索耗时: {t7-t6:.2f}s, "
+        f"本地={len(recommend_ctx.get('all', []))}, 网络={len(recommend_ctx.get('web', []))}"
+    )
 
-    # 4. 拼装最终 messages（添加智能回复的system prompt）
+    # 4. 拼装最终 messages
     messages = []
-    # 添加智能回复的 system prompt
-    system_prompt = """你是学生助手。请遵循以下规则回答问题：
-
-1. 如果[知识库检索结果]中有相关内容，优先基于知识库内容回答，并简要提及相关资源
-2. 如果知识库中没有相关内容，但[网络搜索资源]中有，请基于网络资源回答，并在回答末尾提供1-2个最相关的网址链接
-3. 如果两者都没有，给出简短建议，并建议用户尝试更换关键词或上传相关资料
-4. 回答要精炼（2-3句话），不要重复列举所有资源
-5. 提供网址时使用Markdown格式：[标题](URL)"""
-
-    messages.append({
-        "role": "system",
-        "content": [{"type": "text", "text": system_prompt}]
-    })
+    messages.extend(recommend_msgs)
     for h in history_contents:
         messages.append({"role": h["role"], "content": h["content"]})
-    messages.extend(related_context)
-    messages.extend(web_resources)
     messages.append({"role": "user", "content": msg_content})
 
     t8 = time.time()
