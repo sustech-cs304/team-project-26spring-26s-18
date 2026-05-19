@@ -13,11 +13,26 @@ build/
 venv/
 env/
 
+# file_helper 配置（用户个人信息、API密钥等）
+file_helper/config.py
+file_helper/user_config.json
+file_helper/api_key.py
+
 # ===========================================
 # Node
 # ===========================================
 node_modules/
 .DS_Store
+
+# ===========================================
+# Vue / 前端
+# ===========================================
+vue/node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # ===========================================
 # IDE
@@ -26,6 +41,12 @@ node_modules/
 .vscode/
 *.swp
 *.swo
+*.swn
+~*
+
+# 个人配置文件（包含姓名、学号、API密钥等敏感信息）
+scripts/config.json
+python_demo/config/db_config.py
 
 # ===========================================
 # 测试/输出目录
@@ -33,12 +54,14 @@ node_modules/
 scripts/output/
 scripts/test_workspace/
 python_demo/chroma_db/
+file_helper_demo/
 
 # ===========================================
-# 个人配置文件（包含姓名、学号、API密钥等敏感信息）
+# WorkBuddy 工作内存
 # ===========================================
-scripts/config.json
-python_demo/config/db_config.py
+.workbuddy/
+!.workbuddy/memory/
+!.workbuddy/memory/.gitkeep
 
 # ===========================================
 # 临时文件
@@ -47,6 +70,8 @@ python_demo/config/db_config.py
 *.log
 *.bak
 *.cache
+Thumbs.db
+~$
 
 # ===========================================
 # 环境变量文件
