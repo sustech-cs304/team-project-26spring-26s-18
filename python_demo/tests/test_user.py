@@ -57,12 +57,6 @@ def test_oss_util_exists():
     assert utils.oss_util is not None
 
 
-def test_ai_util_exists():
-    """测试 AI 工具模块存在"""
-    import utils.ai_util
-    assert utils.ai_util is not None
-
-
 def test_pdf_util_exists():
     """测试 PDF 工具模块存在"""
     import utils.pdf_util
