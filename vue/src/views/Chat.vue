@@ -498,6 +498,11 @@ function getFileIcon(fileType) {
 function renderMarkdown(mdText) {
   return marked.parse(mdText)
 }
+
+function isSchedulerOnlySession(session) {
+  return String(session?.title || '').trim() === '日程优化方案'
+}
+
 // 滚动到底部
 function scrollToBottom() {
   nextTick(() => {
@@ -536,13 +541,18 @@ async function fetchSessions() {
     if (response.ok) {
       const result = await response.json()
       // 按updated_at时间倒序排序，最新的放到最上面
-      sessions.value = result.data.sort((a, b) => {
+      sessions.value = result.data.filter(session => !isSchedulerOnlySession(session)).sort((a, b) => {
         return new Date(b.updated_at) - new Date(a.updated_at)
       })
       console.log(sessions.value)
-      // 如果有会话，默认选择第一个
-      if (sessions.value.length > 0 && !activeSessionId.value) {
-        selectSession(sessions.value[0].id)
+
+      const activeSessionVisible = sessions.value.some(session => session.id === activeSessionId.value)
+      if (!activeSessionVisible) {
+        activeSessionId.value = sessions.value.length > 0 ? sessions.value[0].id : null
+        messages.value = []
+        if (activeSessionId.value) {
+          fetchSessionContent(activeSessionId.value)
+        }
       }
     }
   } catch (error) {
@@ -552,6 +562,14 @@ async function fetchSessions() {
 
 // 获取会话内容
 async function fetchSessionContent(sessionId) {
+  if (!sessions.value.some(session => session.id === sessionId)) {
+    if (activeSessionId.value === sessionId) {
+      activeSessionId.value = null
+      messages.value = []
+    }
+    return
+  }
+
   try {
     const response = await fetch(`http://${ip}/session/${sessionId}/content`, {
       headers: {
