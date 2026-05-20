@@ -3,7 +3,7 @@
     <div v-if="toast.show" id="toast" class="toast">{{ toast.msg }}</div>
     <nav class="navbar">
       <div class="navbar-left">
-        <img src="@/assets/logo.png" alt="Logo" class="logo" />
+        <img src="@/assets/logo2.png" alt="Logo" class="logo" />
       </div>
       <div class="navbar-title">
         <img src="@/assets/title.png" alt="Title" class="navbar-title-image" />
