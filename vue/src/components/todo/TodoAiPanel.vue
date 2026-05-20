@@ -8,257 +8,278 @@
       <div class="status-pill">轻量模式</div>
     </div>
 
-    <div class="conversation-area">
-      <div
-        v-for="message in messages"
-        :key="message.id"
-        class="message-row"
-        :class="message.role"
-      >
-        <div class="bubble">
-          {{ message.content }}
-        </div>
-      </div>
-      <div v-if="loading" class="message-row assistant">
-        <div class="bubble loading-bubble">正在解析操作草案...</div>
-      </div>
-    </div>
-
-    <section class="analysis-panel">
-      <div class="analysis-panel-top">
-        <div>
-          <div class="analysis-eyebrow">Schedule Analysis</div>
-          <h3>优化方案提出与选择</h3>
-        </div>
-        <button class="analysis-trigger" :disabled="analysisBusy" @click="emit('run-analysis')">
-          {{ analysisTriggerLabel }}
-        </button>
-      </div>
-
-      <div class="analysis-card">
-        <div class="analysis-card-title">数据来源</div>
-        <div class="analysis-source-overview">
-          <div class="analysis-metric">
-            <span>分析范围</span>
-            <strong>{{ dataSourceSummary.rangeLabel || '当前视图' }}</strong>
-          </div>
-          <div class="analysis-metric">
-            <span>待办总量</span>
-            <strong>{{ dataSourceSummary.totalTodoCount || 0 }}</strong>
-          </div>
-          <div class="analysis-metric">
-            <span>未完成个人事项</span>
-            <strong>{{ dataSourceSummary.pendingTodoCount || 0 }}</strong>
-          </div>
-        </div>
-        <div class="analysis-source-list">
-          <div
-            v-for="source in dataSourceSummary.includedSources || []"
-            :key="source.key"
-            class="analysis-source-item"
-          >
-            <strong>{{ source.label }}</strong>
-            <span>{{ source.count }} 条</span>
-            <small>{{ source.detail }}</small>
-          </div>
-        </div>
-        <div class="analysis-helper">
-          分析基于已导入的课程表、校历和 Blackboard 数据；日历显示开关不会改变分析结果。
-        </div>
-      </div>
-
-      <template v-if="analysisVisible">
-        <div v-if="analysisError" class="analysis-card analysis-card-error">
-          {{ analysisError }}
-        </div>
-
-        <template v-else-if="analysisLoading">
-          <div class="analysis-card analysis-card-loading">正在聚合当前周的日程、课程和截止事项...</div>
-        </template>
-
-        <template v-else-if="analysisData">
-          <div class="analysis-card">
-            <div class="analysis-card-title">检测结果</div>
-            <div class="analysis-metric-list">
-              <div class="analysis-metric">
-                <span>风险等级</span>
-                <strong>{{ riskLabel }}</strong>
-              </div>
-              <div class="analysis-metric">
-                <span>时间冲突</span>
-                <strong>{{ summary.conflict_count || 0 }}</strong>
-              </div>
-              <div class="analysis-metric">
-                <span>堆积时段</span>
-                <strong>{{ summary.pileup_count || 0 }}</strong>
-              </div>
-              <div class="analysis-metric">
-                <span>候选建议</span>
-                <strong>{{ summary.suggestion_count || 0 }}</strong>
-              </div>
-            </div>
-            <div v-if="topInsights.length" class="analysis-insight-list">
-              <div
-                v-for="item in topInsights"
-                :key="item.key"
-                class="analysis-insight-item"
-              >
-                <strong>{{ item.label }}</strong>
-                <span>{{ item.text }}</span>
-              </div>
-            </div>
-            <div v-else class="analysis-empty">
-              当前范围内没有明显冲突或堆积，整体安排较平稳。
-            </div>
-          </div>
-
-          <div class="analysis-card">
-            <div class="analysis-card-title">AI 候选优化方案（当前分析参考）</div>
-            <div class="analysis-helper">
-              候选方案基于 aggregate-analysis 的结构化结果由 AI 生成。选择后会在周历上预览建议调整，但不会保存到后端，也不会直接改写当前 Todo。
-            </div>
-            <div v-if="planGenerationLoading" class="analysis-card-loading">
-              正在根据检测结果生成可执行优化方案...
-            </div>
-            <div v-else-if="planGenerationError" class="analysis-empty">
-              {{ planGenerationError }}
-            </div>
-            <div v-else-if="candidatePlans.length" class="plan-list">
-              <article
-                v-for="plan in candidatePlans"
-                :key="plan.id"
-                class="plan-card"
-                :class="{ selected: selectedPlanId === plan.id }"
-                @click="selectPlan(plan)"
-              >
-                <div class="plan-card-head">
-                  <div>
-                    <strong>{{ plan.name }}</strong>
-                    <div class="plan-subtitle">优先目标：{{ plan.goal }}</div>
-                  </div>
-                  <div class="plan-badges">
-                    <span class="plan-badge">{{ plan.adjustmentCount }} 项调整</span>
-                    <span class="plan-badge ai">AI 生成</span>
-                  </div>
-                </div>
-                <p class="plan-reason">{{ plan.summary }}</p>
-                <div class="plan-action-list">
-                  <div
-                    v-for="item in plan.adjustments"
-                    :key="item.key"
-                    class="plan-action-item"
-                  >
-                    <strong>{{ item.itemTitle }}</strong>
-                    <span class="plan-timing">{{ item.currentTime }} → {{ item.suggestedTime }}</span>
-                    <small>原因：{{ item.reason }}</small>
-                    <small>预期效果：{{ item.expectedEffect }}</small>
-                  </div>
-                </div>
-                <button
-                  class="plan-select-btn"
-                  :class="{ selected: selectedPlanId === plan.id }"
-                  @click.stop="selectPlan(plan)"
-                >
-                  {{ selectedPlanId === plan.id ? '取消日历预览' : '在周历中预览此方案' }}
-                </button>
-              </article>
-            </div>
-            <div v-else class="analysis-empty">
-              当前分析尚未生成 AI 候选方案。
-            </div>
-          </div>
-        </template>
-
-        <div v-else class="analysis-card analysis-empty-state">
-          点击 “Analyze My Schedule” 后，将基于当前 Todo、课程表、校历和 Blackboard 数据生成优化建议。
-        </div>
-      </template>
-    </section>
-
-    <div class="confirmation-card">
-      <div class="card-title">待确认操作</div>
-      <template v-if="previewAction">
-        <div class="card-item">
-          <span>操作类型</span>
-          <strong>{{ actionLabel(previewAction.action) }}</strong>
-        </div>
-        <div v-if="previewAction.target" class="card-item">
-          <span>匹配事项</span>
-          <strong>{{ formatTodoSummary(previewAction.target) }}</strong>
-        </div>
-        <div v-else-if="previewAction.targetHint" class="card-item">
-          <span>目标线索</span>
-          <strong>{{ previewAction.targetHint }}</strong>
-        </div>
-
-        <template v-if="previewAction.action === 'create'">
-          <div class="card-item">
-            <span>标题</span>
-            <strong>{{ previewAction.payload.title }}</strong>
-          </div>
-          <div class="card-item">
-            <span>内容</span>
-            <strong>{{ previewAction.payload.content || '无' }}</strong>
-          </div>
-          <div class="card-item card-item-stack">
-            <span>最终时间</span>
-            <strong>{{ formatDraftTiming(previewAction.payload) }}</strong>
-          </div>
-          <div class="card-item">
-            <span>优先级</span>
-            <strong>{{ priorityText(previewAction.payload.priority) }}</strong>
-          </div>
-        </template>
-
-        <template v-else-if="previewAction.action === 'update'">
-          <div
-            v-for="field in previewAction.changedFields"
-            :key="field.label"
-            class="card-item card-item-stack"
-          >
-            <span>{{ field.label }}</span>
-            <strong>{{ field.to }}</strong>
-            <small>原值：{{ field.from }}</small>
-          </div>
-          <div class="card-item card-item-stack">
-            <span>最终时间</span>
-            <strong>{{ formatDraftTiming(previewAction.payload) }}</strong>
-          </div>
-        </template>
-
-        <template v-else-if="previewAction.action === 'delete'">
-          <div class="card-note danger-note">确认后会删除该事项，后端不会自动回滚。</div>
-        </template>
-
-        <template v-else>
-          <div class="card-item">
-            <span>目标状态</span>
-            <strong>{{ statusText(previewAction.payload.status) }}</strong>
-          </div>
-        </template>
-
-        <div v-if="previewAction.blockedReason" class="card-note blocked-note">
-          {{ previewAction.blockedReason }}
-        </div>
+    <div class="assistant-main-scroll">
+      <div class="conversation-area">
         <div
-          v-if="previewAction.candidates?.length && !previewAction.canConfirm"
-          class="candidate-list"
+          v-for="message in messages"
+          :key="message.id"
+          class="message-row"
+          :class="message.role"
         >
-          <div
-            v-for="item in previewAction.candidates"
-            :key="item.id"
-            class="candidate-item"
-          >
-            {{ formatTodoSummary(item) }}
+          <div class="bubble">
+            {{ message.content }}
           </div>
         </div>
-        <div class="card-actions">
-          <button class="confirm-btn" :disabled="confirmDisabled" @click="confirmAction">确认执行</button>
-          <button class="cancel-btn" :disabled="confirming" @click="clearPreview">取消</button>
+        <div v-if="loading" class="message-row assistant">
+          <div class="bubble loading-bubble">正在解析操作草案...</div>
         </div>
-      </template>
-      <div v-else class="card-note">
-        输入自然语言后，AI 会先返回结构化操作草案。只有你点击“确认执行”后，才会调用后端新增、修改、删除或更新状态。
+      </div>
+
+      <section class="analysis-panel">
+        <div class="analysis-panel-top">
+          <div>
+            <div class="analysis-eyebrow">Schedule Analysis</div>
+            <h3>优化方案提出与选择</h3>
+          </div>
+          <button class="analysis-trigger" :disabled="analysisLoading" @click="emit('run-analysis')">
+            {{ analysisTriggerLabel }}
+          </button>
+        </div>
+
+        <div class="analysis-card">
+          <div class="analysis-card-title">数据来源</div>
+          <div class="analysis-source-overview">
+            <div class="analysis-metric">
+              <span>分析范围</span>
+              <strong>{{ dataSourceSummary.rangeLabel || '当前视图' }}</strong>
+            </div>
+            <div class="analysis-metric">
+              <span>待办总量</span>
+              <strong>{{ dataSourceSummary.totalTodoCount || 0 }}</strong>
+            </div>
+            <div class="analysis-metric">
+              <span>未完成个人事项</span>
+              <strong>{{ dataSourceSummary.pendingTodoCount || 0 }}</strong>
+            </div>
+          </div>
+          <div class="analysis-source-list">
+            <div
+              v-for="source in dataSourceSummary.includedSources || []"
+              :key="source.key"
+              class="analysis-source-item"
+            >
+              <strong>{{ source.label }}</strong>
+              <span>{{ source.count }} 条</span>
+              <small>{{ source.detail }}</small>
+            </div>
+          </div>
+          <div class="analysis-helper">
+            分析基于已导入的课程表、校历和 Blackboard 数据；日历显示开关不会改变分析结果。
+          </div>
+        </div>
+
+        <template v-if="analysisVisible">
+          <div v-if="analysisError" class="analysis-card analysis-card-error">
+            {{ analysisError }}
+          </div>
+
+          <template v-else-if="analysisLoading">
+            <div class="analysis-card analysis-card-loading">正在聚合当前周的日程、课程和截止事项...</div>
+          </template>
+
+          <template v-else-if="analysisData">
+            <div class="analysis-card">
+              <div class="analysis-card-title">检测结果</div>
+              <div class="analysis-metric-list">
+                <div class="analysis-metric">
+                  <span>风险等级</span>
+                  <strong>{{ riskLabel }}</strong>
+                </div>
+                <div class="analysis-metric">
+                  <span>时间冲突</span>
+                  <strong>{{ summary.conflict_count || 0 }}</strong>
+                </div>
+                <div class="analysis-metric">
+                  <span>堆积时段</span>
+                  <strong>{{ summary.pileup_count || 0 }}</strong>
+                </div>
+                <div class="analysis-metric">
+                  <span>候选建议</span>
+                  <strong>{{ summary.suggestion_count || 0 }}</strong>
+                </div>
+              </div>
+              <div v-if="topInsights.length" class="analysis-insight-list">
+                <div
+                  v-for="item in topInsights"
+                  :key="item.key"
+                  class="analysis-insight-item"
+                >
+                  <strong>{{ item.label }}</strong>
+                  <span>{{ item.text }}</span>
+                </div>
+              </div>
+              <div v-else class="analysis-empty">
+                当前范围内没有明显冲突或堆积，整体安排较平稳。
+              </div>
+            </div>
+
+            <div class="analysis-card">
+              <div class="analysis-card-title">AI 候选优化方案（当前分析参考）</div>
+              <div class="analysis-helper">
+                候选方案基于 aggregate-analysis 的结构化结果由 AI 生成。选择后会在周历上预览建议调整，但不会保存到后端，也不会直接改写当前 Todo。
+              </div>
+              <div v-if="planGenerationLoading" class="analysis-card-loading">
+                Generating AI suggestions...
+              </div>
+              <div v-else-if="planGenerationError" class="analysis-empty">
+                {{ planGenerationError }}
+              </div>
+              <div v-else-if="candidatePlans.length" class="plan-list">
+                <article
+                  v-for="plan in candidatePlans"
+                  :key="plan.id"
+                  class="plan-card"
+                  :class="{ selected: selectedPlanId === plan.id }"
+                  @click="selectPlan(plan)"
+                >
+                  <div class="plan-card-head">
+                    <div>
+                      <strong>{{ plan.name }}</strong>
+                      <div class="plan-subtitle">优先目标：{{ plan.goal }}</div>
+                    </div>
+                    <div class="plan-badges">
+                      <span class="plan-badge">{{ plan.adjustmentCount }} 项调整</span>
+                      <span class="plan-badge ai">AI 生成</span>
+                    </div>
+                  </div>
+                  <p class="plan-reason">{{ plan.summary }}</p>
+                  <div class="plan-action-list">
+                    <div
+                      v-for="item in plan.adjustments"
+                      :key="item.key"
+                      class="plan-action-item"
+                    >
+                      <strong>{{ item.itemTitle }}</strong>
+                      <span class="plan-timing">{{ item.currentTime }} → {{ item.suggestedTime }}</span>
+                      <small>原因：{{ item.reason }}</small>
+                      <small>预期效果：{{ item.expectedEffect }}</small>
+                      <small v-if="!canApplyPlanAdjustment(item)" class="plan-action-warning">
+                        缺少目标事项或建议时间，只能作为预览参考。
+                      </small>
+                      <div class="plan-action-controls">
+                        <button
+                          class="plan-action-btn apply"
+                          :disabled="isPlanActionBusy || !canApplyPlanAdjustment(item)"
+                          @click.stop="emit('apply-plan-adjustment', { planId: plan.id, adjustmentId: item.id })"
+                        >
+                          {{ planActionBusyId === getPlanActionBusyId(plan, item) ? '应用中...' : '应用此建议' }}
+                        </button>
+                        <button
+                          class="plan-action-btn ignore"
+                          :disabled="isPlanActionBusy"
+                          @click.stop="emit('cancel-plan-adjustment', { planId: plan.id, adjustmentId: item.id })"
+                        >
+                          忽略
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    class="plan-select-btn"
+                    :class="{ selected: selectedPlanId === plan.id }"
+                    @click.stop="selectPlan(plan)"
+                  >
+                    {{ selectedPlanId === plan.id ? '取消日历预览' : '在周历中预览此方案' }}
+                  </button>
+                </article>
+              </div>
+              <div v-else class="analysis-empty">
+                当前分析尚未生成 AI 候选方案。
+              </div>
+            </div>
+          </template>
+
+          <div v-else class="analysis-card analysis-empty-state">
+            点击 “Analyze My Schedule” 后，将基于当前 Todo、课程表、校历和 Blackboard 数据生成优化建议。
+          </div>
+        </template>
+      </section>
+
+      <div class="confirmation-card">
+        <div class="card-title">待确认操作</div>
+        <template v-if="previewAction">
+          <div class="card-item">
+            <span>操作类型</span>
+            <strong>{{ actionLabel(previewAction.action) }}</strong>
+          </div>
+          <div v-if="previewAction.target" class="card-item">
+            <span>匹配事项</span>
+            <strong>{{ formatTodoSummary(previewAction.target) }}</strong>
+          </div>
+          <div v-else-if="previewAction.targetHint" class="card-item">
+            <span>目标线索</span>
+            <strong>{{ previewAction.targetHint }}</strong>
+          </div>
+
+          <template v-if="previewAction.action === 'create'">
+            <div class="card-item">
+              <span>标题</span>
+              <strong>{{ previewAction.payload.title }}</strong>
+            </div>
+            <div class="card-item">
+              <span>内容</span>
+              <strong>{{ previewAction.payload.content || '无' }}</strong>
+            </div>
+            <div class="card-item card-item-stack">
+              <span>最终时间</span>
+              <strong>{{ formatDraftTiming(previewAction.payload) }}</strong>
+            </div>
+            <div class="card-item">
+              <span>优先级</span>
+              <strong>{{ priorityText(previewAction.payload.priority) }}</strong>
+            </div>
+          </template>
+
+          <template v-else-if="previewAction.action === 'update'">
+            <div
+              v-for="field in previewAction.changedFields"
+              :key="field.label"
+              class="card-item card-item-stack"
+            >
+              <span>{{ field.label }}</span>
+              <strong>{{ field.to }}</strong>
+              <small>原值：{{ field.from }}</small>
+            </div>
+            <div class="card-item card-item-stack">
+              <span>最终时间</span>
+              <strong>{{ formatDraftTiming(previewAction.payload) }}</strong>
+            </div>
+          </template>
+
+          <template v-else-if="previewAction.action === 'delete'">
+            <div class="card-note danger-note">确认后会删除该事项，后端不会自动回滚。</div>
+          </template>
+
+          <template v-else>
+            <div class="card-item">
+              <span>目标状态</span>
+              <strong>{{ statusText(previewAction.payload.status) }}</strong>
+            </div>
+          </template>
+
+          <div v-if="previewAction.blockedReason" class="card-note blocked-note">
+            {{ previewAction.blockedReason }}
+          </div>
+          <div
+            v-if="previewAction.candidates?.length && !previewAction.canConfirm"
+            class="candidate-list"
+          >
+            <div
+              v-for="item in previewAction.candidates"
+              :key="item.id"
+              class="candidate-item"
+            >
+              {{ formatTodoSummary(item) }}
+            </div>
+          </div>
+          <div class="card-actions">
+            <button class="confirm-btn" :disabled="confirmDisabled" @click="confirmAction">确认执行</button>
+            <button class="cancel-btn" :disabled="confirming" @click="clearPreview">取消</button>
+          </div>
+        </template>
+        <div v-else class="card-note">
+          输入自然语言后，AI 会先返回结构化操作草案。只有你点击“确认执行”后，才会调用后端新增、修改、删除或更新状态。
+        </div>
       </div>
     </div>
 
@@ -340,9 +361,19 @@ const props = defineProps({
     type: String,
     default: '',
   },
+  planActionBusyId: {
+    type: String,
+    default: '',
+  },
 })
 
-const emit = defineEmits(['confirm-action', 'run-analysis', 'select-plan'])
+const emit = defineEmits([
+  'confirm-action',
+  'run-analysis',
+  'select-plan',
+  'apply-plan-adjustment',
+  'cancel-plan-adjustment',
+])
 const userStore = useUserStore()
 
 const draft = ref('')
@@ -366,13 +397,8 @@ const confirmDisabled = computed(() => {
   return props.confirming || !previewAction.value?.canConfirm
 })
 
-const analysisBusy = computed(() => {
-  return props.analysisLoading || props.planGenerationLoading
-})
-
 const analysisTriggerLabel = computed(() => {
   if (props.analysisLoading) return '分析中...'
-  if (props.planGenerationLoading) return '生成方案中...'
   return 'Analyze My Schedule'
 })
 
@@ -426,6 +452,16 @@ const candidatePlans = computed(() => {
       : [],
   }))
 })
+
+const isPlanActionBusy = computed(() => Boolean(props.planActionBusyId))
+
+function getPlanActionBusyId(plan, adjustment) {
+  return `${String(plan?.id || '')}:${String(adjustment?.id || '')}`
+}
+
+function canApplyPlanAdjustment(adjustment) {
+  return adjustment?.can_apply !== false
+}
 
 watch(
   () => props.actionFeedback,
@@ -981,20 +1017,23 @@ function confirmAction() {
 
 <style scoped>
 .todo-ai-panel {
-  height: 100%;
+  height: calc(100vh - 90px);
   display: flex;
   flex-direction: column;
+  min-height: 0;
   padding: 22px;
   border-radius: 24px;
   background: linear-gradient(180deg, #0e2238 0%, #122e4c 100%);
   color: #eef5fb;
   box-shadow: 0 18px 48px rgba(17, 37, 61, 0.18);
+  overflow: hidden;
 }
 
 .panel-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex: 0 0 auto;
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -1018,21 +1057,27 @@ function confirmAction() {
   font-size: 12px;
 }
 
-.conversation-area {
+.assistant-main-scroll {
   flex: 1;
-  min-height: 200px;
-  overflow: auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.conversation-area {
+  min-height: 0;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   gap: 14px;
   margin-bottom: 18px;
-  padding-right: 4px;
 }
 
 .analysis-panel {
   margin-bottom: 18px;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   gap: 12px;
 }
 
@@ -1230,6 +1275,41 @@ function confirmAction() {
   line-height: 1.45;
 }
 
+.plan-action-warning {
+  color: #ffd7b5;
+}
+
+.plan-action-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.plan-action-btn {
+  border: none;
+  border-radius: 9px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.plan-action-btn.apply {
+  background: #d7ebff;
+  color: #12304d;
+}
+
+.plan-action-btn.ignore {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f1f8ff;
+}
+
+.plan-action-btn:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
 .plan-select-btn {
   margin-top: 10px;
   border: none;
@@ -1273,6 +1353,7 @@ function confirmAction() {
 .confirmation-card {
   padding: 16px;
   margin-bottom: 16px;
+  min-height: 0;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1366,6 +1447,8 @@ function confirmAction() {
 
 .input-area {
   display: flex;
+  flex: 0 0 auto;
+  min-height: 0;
   flex-direction: column;
   gap: 12px;
 }
@@ -1408,7 +1491,7 @@ function confirmAction() {
 
 @media (max-width: 960px) {
   .todo-ai-panel {
-    min-height: 640px;
+    height: calc(100vh - 80px);
   }
 
   .analysis-source-overview,

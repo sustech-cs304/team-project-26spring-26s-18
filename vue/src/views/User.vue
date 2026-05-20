@@ -9,22 +9,38 @@
       </div>
       <div class="user-info">
         <div class="username-span">昵称:</div>
-        <div class="username-real">
-          <template v-if="!isEditing">{{ userStore.userName || '用户名' }}</template>
-          <template v-else><input v-model="editUserName" type="text"
-              style="width:90%;height:70%;font-size:18px;border:none;background:transparent;outline:none;" /></template>
+        <div
+          class="username-real"
+          :title="isEditing ? editUserName : (userStore.userName || '用户名')"
+        >
+          <span v-if="!isEditing" class="username-real-text">{{ userStore.userName || '用户名' }}</span>
+          <input
+            v-else
+            v-model="editUserName"
+            type="text"
+            class="username-field-input"
+          />
         </div>
       </div>
       <div class="user-info">
         <div class="username-span">邮箱:</div>
-        <div class="username-real">{{ userStore.email || '用户邮箱' }}</div>
+        <div class="username-real" :title="userStore.email || '用户邮箱'">
+          <span class="username-real-text">{{ userStore.email || '用户邮箱' }}</span>
+        </div>
       </div>
       <div class="user-info">
         <div class="username-span">电话:</div>
-        <div class="username-real">
-          <template v-if="!isEditing">{{ userStore.phone || '用户电话' }}</template>
-          <template v-else><input v-model="editPhone" type="text"
-              style="width:90%;height:70%;font-size:18px;border:none;background:transparent;outline:none;" /></template>
+        <div
+          class="username-real"
+          :title="isEditing ? editPhone : (userStore.phone || '用户电话')"
+        >
+          <span v-if="!isEditing" class="username-real-text">{{ userStore.phone || '用户电话' }}</span>
+          <input
+            v-else
+            v-model="editPhone"
+            type="text"
+            class="username-field-input"
+          />
         </div>
       </div>
       <button class="user-btn-edit" @click="onEditClick">{{ isEditing ? '保存信息' : '修改个人信息' }}</button>
@@ -206,6 +222,7 @@ function onCancelClick() {
   flex-direction: column;
   align-items: flex-start;
   width: 90%;
+  min-width: 0;
   gap: 4px;
 }
 
@@ -218,17 +235,38 @@ function onCancelClick() {
 }
 
 .username-real {
-  font-size: 16px;
   font-weight: bold;
   background-color: #e7e9eb;
   border-radius: 12px;
+  min-height: 40px;
   height: 40px;
   width: 100%;
+  min-width: 0;
   font-size: 20px;
   display: flex;
   align-items: center;
-  padding-left: 16px;
+  padding: 0 12px 0 16px;
+  overflow: hidden;
   transition: background-color 0.3s, color 0.3s;
+}
+
+.username-real-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.username-field-input {
+  min-width: 0;
+  flex: 1 1 0;
+  width: 100%;
+  height: 70%;
+  font-size: 18px;
+  border: none;
+  background: transparent;
+  outline: none;
 }
 
 .user-btn-edit {

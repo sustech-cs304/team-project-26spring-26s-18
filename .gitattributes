@@ -1,0 +1,30 @@
+# Auto detect text files and perform LF normalization
+* text=auto eol=lf
+
+# Explicitly set text files
+*.py text eol=lf
+*.js text eol=lf
+*.vue text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.sql text eol=lf
+
+# Binary files should be left untouched
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.tar.gz binary
+*.pdf binary
+
+# Docker and CI files
+Dockerfile text eol=lf
+*.dockerignore text eol=lf
+.github/**/* text eol=lf

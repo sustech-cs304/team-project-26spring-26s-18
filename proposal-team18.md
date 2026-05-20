@@ -12,7 +12,7 @@
 3. **学习助手（Study Copilot）**  
    处理讲座PPT或Markdown笔记，自动生成针对这些材料的测验题或摘要，辅助复习与知识巩固。
 
-4. **文件管理助手（file management scripts）**  
+4. **文件管理助手（File Helper）**  
    执行系统级任务，例如“将所有实验文件重命名为 [姓名_ID_Lab1].zip”或"读取文件内容将文件放入对应的文件夹”
 
 5. **学术资源智能推荐器（Academic Resource Intelligent Recommender）**  

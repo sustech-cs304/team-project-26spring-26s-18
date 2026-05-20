@@ -1,8 +1,9 @@
 import time
 print(f"[启动分析] routers/session.py 开始导入 {time.time()}")
-from fastapi import APIRouter, Depends, HTTPException,Body
+from fastapi import APIRouter, Depends, HTTPException, Body
+from sqlalchemy import select, delete
 from sqlalchemy.orm import Session as DBSession
-from typing import List, Optional
+from typing import Dict, List, Optional
 from schemas.session import Session as SessionSchema, SessionContent as SessionContentSchema
 from utils.Result import Result
 from schemas.session import Session as SessionSchema, SessionContent as SessionContentSchema
@@ -19,6 +20,8 @@ from crud.session import (
 from config.db_config import get_db
 from utils.ai_util import ai_chat, ai_chat_stream
 from fastapi.responses import StreamingResponse
+from models.session import Session as SessionModel, SessionContent
+from utils.recommend_resources_util import extract_session_links, resolve_recommend_context
 
 router = APIRouter(prefix="/session", tags=["session"])
 
@@ -138,6 +141,104 @@ async def api_create_ai_content_stream_more_history_no_rag(
         ):
             yield chunk
     return StreamingResponse(event_generator(), media_type="text/plain")
+
+# 推荐模式流式接口：正常回复，与资源卡片共用检索逻辑
+@router.post("/aicontent/stream_recommend")
+async def api_create_ai_content_stream_recommend(
+    session_id: int = Body(..., embed=True),
+    content: str = Body(..., embed=True),
+    files: Optional[List[str]] = Body(None, embed=True),
+    file_types: Optional[List[str]] = Body(None, embed=True),
+    file_names: Optional[List[str]] = Body(None, embed=True),
+    db: DBSession = Depends(get_db)
+):
+    async def event_generator():
+        from utils.ai_util import ai_chat_stream_recommend
+        async for chunk in ai_chat_stream_recommend(
+            db=db,
+            session_id=session_id,
+            content=content,
+            files=files,
+            file_types=file_types,
+            file_names=file_names
+        ):
+            yield chunk
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
+# Agent模式，实现自主选择工具
+@router.post("/aicontent/agent")
+async def api_create_ai_content_agent(
+    session_id: int = Body(..., embed=True),
+    content: str = Body(..., embed=True),
+    # mode: str = Body("agent", embed=True),      
+    files: Optional[List[str]] = Body(None, embed=True),
+    file_types: Optional[List[str]] = Body(None, embed=True),
+    file_names: Optional[List[str]] = Body(None, embed=True),
+    db: DBSession = Depends(get_db)
+):
+    async def event_generator():
+        from utils.ai_util import agent_chat_stream
+        async for chunk in agent_chat_stream(
+            db=db,
+            session_id=session_id,
+            content=content,
+            files=files,
+            file_types=file_types,
+            file_names=file_names
+        ):
+            yield chunk
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
+
+@router.post("/recommend/resources")
+async def api_recommend_resources(
+    user_id: int = Body(..., embed=True),
+    query: str = Body("", embed=True),
+    session_id: Optional[int] = Body(None, embed=True),
+    db: DBSession = Depends(get_db),
+):
+    """
+    推荐资料：智能判断是否展示推荐卡片
+    返回分类结果：课件(lecture)、习题(exercise)、参考资料(reference)
+    新增：MOOC、GitHub、教程等推荐资源
+    """
+    q = (query or "").strip()
+    session_links: List[Dict] = []
+
+    if session_id is not None:
+        res = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
+        sess = res.scalar_one_or_none()
+        if not sess or sess.user_id != user_id:
+            raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+        contents = list(await get_content_by_session_id(db, session_id))
+        session_links = extract_session_links(contents)
+        if not q:
+            for row in reversed(contents):
+                if row.role == "user" and row.content_type == "text" and (row.content or "").strip():
+                    q = row.content.strip()
+                    break
+
+    if not q:
+        return Result.error("请输入检索内容，或选择会话后由系统取您最后一条文字消息作为检索词")
+
+    ctx = await resolve_recommend_context(q)
+
+    return Result.success({
+        "query_used": ctx.get("query_used", q),
+        "should_show_recommendation": ctx.get("should_show_recommendation", False),
+        "lecture": ctx.get("lecture", []),
+        "exercise": ctx.get("exercise", []),
+        "reference": ctx.get("reference", []),
+        "other": ctx.get("other", []),
+        "web": ctx.get("web", []),
+        "has_local": ctx.get("has_local", False),
+        "has_web": ctx.get("has_web", False),
+        "cot_reason": ctx.get("cot_reason", ""),
+        "search_plan": ctx.get("search_plan"),
+        "session_links": session_links,
+    })
+
+
 @router.delete("/content/{content_id}")
 async def api_delete_content(content_id: int, db: DBSession = Depends(get_db)):
     await db.execute(delete(SessionContent).where(SessionContent.id == content_id))

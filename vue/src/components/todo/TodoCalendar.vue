@@ -117,6 +117,22 @@
                     <span class="preview-chip">{{ segment.preview.preview_label || 'AI Preview' }}</span>
                   </div>
                   <div class="event-title">{{ segment.preview.item_title }}</div>
+                  <div class="preview-actions">
+                    <button
+                      class="preview-action apply"
+                      :disabled="isPreviewActionBusy || segment.preview.can_apply === false"
+                      @click.stop="emit('apply-preview-adjustment', segment.preview)"
+                    >
+                      {{ previewActionBusyId === getPreviewActionBusyId(segment.preview) ? '应用中' : '应用' }}
+                    </button>
+                    <button
+                      class="preview-action cancel"
+                      :disabled="isPreviewActionBusy"
+                      @click.stop="emit('cancel-preview-adjustment', segment.preview)"
+                    >
+                      忽略
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -152,9 +168,20 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  previewActionBusyId: {
+    type: String,
+    default: '',
+  },
 })
 
-const emit = defineEmits(['change-week', 'open-add', 'select-event', 'create-at-slot'])
+const emit = defineEmits([
+  'change-week',
+  'open-add',
+  'select-event',
+  'create-at-slot',
+  'apply-preview-adjustment',
+  'cancel-preview-adjustment',
+])
 
 const timelineScroller = ref(null)
 const HOUR_HEIGHT = 64
@@ -179,6 +206,7 @@ const scrollbarOffset = ref(0)
 const headerRowStyle = computed(() => ({
   paddingRight: `${scrollbarOffset.value}px`,
 }))
+const isPreviewActionBusy = computed(() => Boolean(props.previewActionBusyId))
 
 onMounted(() => {
   nextTick(() => {
@@ -212,6 +240,10 @@ function getBackgroundMarkersForDay(dayIso) {
 
 function getPreviewsForDay(dayIso) {
   return dayPreviewLayouts.value[dayIso] || []
+}
+
+function getPreviewActionBusyId(preview) {
+  return `${String(preview?.plan_id || '')}:${String(preview?.adjustment_id || '')}`
 }
 
 function handleDayColumnClick(dayIso, event) {
@@ -756,6 +788,37 @@ function statusClass(status) {
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 0 0 auto;
+}
+
+.preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.preview-action {
+  border: none;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.preview-action.apply {
+  background: rgba(255, 255, 255, 0.9);
+  color: #2e4c6f;
+}
+
+.preview-action.cancel {
+  background: rgba(93, 87, 112, 0.12);
+  color: var(--preview-text);
+}
+
+.preview-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .todo-event.is-range {

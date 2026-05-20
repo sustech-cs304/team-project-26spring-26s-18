@@ -115,11 +115,17 @@ async function sendVerificationCode() {
     return
   }
   try {
-    await fetch(`http://${ip}/user/sendCode`, {
+    const res = await fetch(`http://${ip}/user/sendCode`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: registerEmail.value })
     })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || data.code !== 1) {
+      const msg = data.message || `请求失败 (${res.status})`
+      ElMessage.error(msg)
+      return
+    }
     ElMessage.success('验证码已发送，请查收！')
     // 倒计时
     let count = 60
@@ -136,7 +142,7 @@ async function sendVerificationCode() {
       }
     }, 1000)
   } catch (e) {
-    ElMessage.error('验证码发送失败')
+    ElMessage.error('验证码发送失败：网络异常或后端未启动，请检查 config.js 中的 ip 是否与后端一致')
   }
 }
 
