@@ -244,6 +244,288 @@ def filter_by_name_endswith(files: List[str], suffix: str, case_sensitive: bool 
         return [f for f in files if Path(f).name[-len(suffix):].lower() == suffix_lower]
 
 
+# ===== 内容搜索 =====
+
+# 可直接当文本读取的扩展名
+TEXT_READABLE_EXTENSIONS = {
+    "txt", "md", "csv", "json", "xml", "yaml", "yml", "toml", "ini", "cfg", "conf",
+    "log", "rst", "tex", "bib", "sql", "sh", "bat", "ps1", "cmake",
+    "py", "java", "js", "ts", "jsx", "tsx", "html", "htm", "css", "scss", "less",
+    "cpp", "c", "h", "hpp", "cc", "cxx", "cs", "go", "rs", "php", "rb", "swift", "kt",
+    "vue", "svelte", "lua", "r", "m", "mm", "pl", "scala", "dart",
+}
+
+# 需要专用解析器的扩展名
+PARSER_EXTENSIONS = {
+    "pdf": "pdf",
+    "docx": "docx",
+    "pptx": "pptx",
+    "xlsx": "xlsx",
+}
+
+# 二进制文件：不含文本内容，直接跳过，不做内容搜索
+SKIP_EXTENSIONS = {
+    "jpg", "jpeg", "png", "gif", "bmp", "webp", "svg", "ico", "tiff", "heic", "raw",
+    "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "m4v", "3gp",
+    "mp3", "wav", "flac", "aac", "ogg", "wma", "m4a",
+    "exe", "dll", "so", "dylib", "bin", "iso", "img",
+    "zip", "rar", "7z", "tar", "gz", "bz2", "xz",
+    "pyc", "pyo", "class", "o", "obj",
+    "db", "sqlite", "sqlite3",
+    "ttf", "otf", "woff", "woff2",
+    "drawio",
+}
+
+# 大文件阈值：超过此大小的文本文件跳过内容读取（字节）
+MAX_TEXT_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+_CHUNK_SIZE = 65536  # 64KB，流式读取块大小
+
+
+def _detect_encoding(file_path: str) -> str:
+    """读取文件头部检测编码"""
+    try:
+        with open(file_path, "rb") as fh:
+            raw = fh.read(4096)
+        try:
+            import chardet
+            return chardet.detect(raw).get("encoding") or "utf-8"
+        except ImportError:
+            return "utf-8"
+    except Exception:
+        return "utf-8"
+
+
+def _read_text_content(file_path: str) -> str:
+    """尝试以文本方式读取文件内容（自动检测编码）"""
+    try:
+        size = Path(file_path).stat().st_size
+        if size > MAX_TEXT_FILE_SIZE:
+            return ""
+        encoding = _detect_encoding(file_path)
+        with open(file_path, "r", encoding=encoding, errors="ignore") as fh:
+            return fh.read(MAX_TEXT_FILE_SIZE)
+    except Exception:
+        return ""
+
+
+def _match_text_stream(file_path: str, match_fn) -> bool:
+    """流式读取文本文件，找到匹配立即返回，避免读完整个大文件"""
+    try:
+        size = Path(file_path).stat().st_size
+        if size > MAX_TEXT_FILE_SIZE:
+            return False
+        encoding = _detect_encoding(file_path)
+        with open(file_path, "r", encoding=encoding, errors="ignore") as fh:
+            leftover = ""
+            read = 0
+            while read < MAX_TEXT_FILE_SIZE:
+                chunk = fh.read(_CHUNK_SIZE)
+                if not chunk:
+                    break
+                text = leftover + chunk
+                if match_fn(text):
+                    return True
+                leftover = chunk[-256:]  # 保留末尾防止关键词跨块
+                read += len(chunk)
+        return False
+    except Exception:
+        return False
+
+
+def _read_pdf_content(file_path: str) -> str:
+    """提取 PDF 文本内容"""
+    try:
+        from PyPDF2 import PdfReader
+        reader = PdfReader(file_path)
+        text = ""
+        for page in reader.pages[:20]:  # 最多读20页
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        return text
+    except Exception:
+        return ""
+
+
+def _match_pdf_stream(file_path: str, match_fn) -> bool:
+    """逐页读取 PDF，找到匹配立即返回"""
+    try:
+        from PyPDF2 import PdfReader
+        reader = PdfReader(file_path)
+        for page in reader.pages[:20]:
+            text = page.extract_text()
+            if text and match_fn(text):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _read_docx_content(file_path: str) -> str:
+    """提取 DOCX 文本内容"""
+    try:
+        from docx import Document
+        doc = Document(file_path)
+        return "\n".join(p.text for p in doc.paragraphs if p.text)
+    except Exception:
+        return ""
+
+
+def _read_pptx_content(file_path: str) -> str:
+    """提取 PPTX 文本内容"""
+    try:
+        from pptx import Presentation
+        prs = Presentation(file_path)
+        text = ""
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    text += shape.text_frame.text + "\n"
+        return text
+    except Exception:
+        return ""
+
+
+def _read_xlsx_content(file_path: str) -> str:
+    """提取 XLSX 文本内容"""
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+        text = ""
+        for sheet_name in wb.sheetnames[:5]:  # 最多读5个sheet
+            ws = wb[sheet_name]
+            for row in ws.iter_rows(values_only=True):
+                row_text = " ".join(str(c) if c is not None else "" for c in row)
+                if row_text.strip():
+                    text += row_text + "\n"
+        wb.close()
+        return text
+    except Exception:
+        return ""
+
+
+def read_file_content(file_path: str) -> str:
+    """
+    读取文件文本内容，自动选择合适的解析器
+
+    支持：txt/md/code 等文本文件、PDF、DOCX、PPTX、XLSX
+
+    Args:
+        file_path: 文件路径
+
+    Returns:
+        文件文本内容，无法读取时返回空字符串
+    """
+    ext = get_extension(file_path).lower()
+
+    # 1. 文本文件直接读
+    if ext in TEXT_READABLE_EXTENSIONS:
+        return _read_text_content(file_path)
+
+    # 2. 专用解析器
+    if ext == "pdf":
+        return _read_pdf_content(file_path)
+    if ext == "docx":
+        return _read_docx_content(file_path)
+    if ext == "pptx":
+        return _read_pptx_content(file_path)
+    if ext == "xlsx":
+        return _read_xlsx_content(file_path)
+
+    # 3. 无扩展名或未知类型，尝试当文本读
+    if not ext or ext not in PARSER_EXTENSIONS:
+        return _read_text_content(file_path)
+
+    return ""
+
+
+def filter_by_content_contains(
+    files: List[str],
+    keywords: Union[List[str], str],
+    case_sensitive: bool = False
+) -> List[str]:
+    """
+    按文件内容搜索（多关键词 OR 匹配）
+
+    优化：
+    - 跳过二进制文件（图片/视频/音频等）
+    - 文本文件流式读取，找到匹配立即停止
+    - PDF 逐页匹配，找到匹配立即停止
+    - 并行处理多个文件
+
+    Args:
+        files: 文件路径列表
+        keywords: 关键词或关键词列表，列表时为 OR 匹配
+        case_sensitive: 是否区分大小写
+
+    Returns:
+        内容匹配的文件列表
+    """
+    import os
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if isinstance(keywords, str):
+        keywords = [keywords]
+    if not keywords:
+        return files
+
+    if case_sensitive:
+        def match(text):
+            return any(kw in text for kw in keywords)
+    else:
+        kw_lower = [kw.lower() for kw in keywords]
+        def match(text):
+            return any(kw in text.lower() for kw in kw_lower)
+
+    def check_file(f):
+        ext = get_extension(f).lower()
+        # 二进制文件直接跳过
+        if ext in SKIP_EXTENSIONS:
+            return None
+        # 文本文件：流式读取，找到即停
+        if ext in TEXT_READABLE_EXTENSIONS or not ext:
+            return f if _match_text_stream(f, match) else None
+        # PDF：逐页匹配，找到即停
+        if ext == "pdf":
+            return f if _match_pdf_stream(f, match) else None
+        # DOCX / PPTX / XLSX：需要全量解析，无法流式
+        if ext == "docx":
+            content = _read_docx_content(f)
+            return f if (content and match(content)) else None
+        if ext == "pptx":
+            content = _read_pptx_content(f)
+            return f if (content and match(content)) else None
+        if ext == "xlsx":
+            content = _read_xlsx_content(f)
+            return f if (content and match(content)) else None
+        return None
+
+    total = len(files)
+    done = [0]
+    lock = __import__("threading").Lock()
+
+    def check_file_with_progress(f):
+        r = check_file(f)
+        with lock:
+            done[0] += 1
+            print(f"\r  搜索中... {done[0]}/{total}  已命中: {len(hits)}", end="", flush=True)
+        return r
+
+    max_workers = min(32, (os.cpu_count() or 1) + 4)
+    hits = set()
+    print(f"  开始搜索 {total} 个文件...")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(check_file_with_progress, f): f for f in files}
+        for future in as_completed(futures):
+            r = future.result()
+            if r is not None:
+                hits.add(r)
+    print()  # 换行
+
+    # 保持原始顺序
+    return [f for f in files if f in hits]
+
+
 def filter_by_path_contains(files: List[str], keyword: str) -> List[str]:
     """
     文件路径包含关键词

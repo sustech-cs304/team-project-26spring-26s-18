@@ -24,7 +24,7 @@ import dashscope
 from dashscope import Generation
 
 # API 配置
-DASHSCOPE_API_KEY = "sk-446b58d9cfc5424aade01a05e396f13c"
+DASHSCOPE_API_KEY = "sk-66bfacdf2a9a49dc9c7cf6ff4e537eef"
 MODEL = "qwen-turbo"
 
 
@@ -70,7 +70,10 @@ def _build_prompt(user_input: str) -> str:
 
     extra_lines = "\n".join(f"  {k}: {v}" for k, v in extra_actions.items())
 
-    prompt = f"""你是文件管理助手。用户说："{user_input}"
+    from datetime import date
+    today = date.today().isoformat()  # 例如 "2026-05-21"
+
+    prompt = f"""你是文件管理助手。今天日期：{today}。用户说："{user_input}"
 
 请分析用户意图，返回结构化的JSON：
 
@@ -82,7 +85,7 @@ def _build_prompt(user_input: str) -> str:
   "target": "目标路径（如移动/复制到某处）",
   "filters": [
     {{
-      "type": "extension | name_contains | name_pattern | size | modified",
+      "type": "extension | name_contains | content_contains | name_pattern | size | modified",
       "value": "具体值"
     }}
   ],
@@ -159,10 +162,69 @@ def _build_prompt(user_input: str) -> str:
 ## 支持的操作（多动作额外）
 {extra_lines}
 
+## 关键词扩展规则（重要！）
+**无论用户找的是学术话题还是生活文件类型，只要是在找"与XX有关的文件"，一律使用 content_contains + 关键词扩展！**
+
+触发条件（以下任意一种均触发）：
+- "XX相关文件"、"关于XX的文件"、"XX有关的"
+- "找所有XX"、"找一下XX"（XX是主题词而非具体文件名）
+- "行程单"、"发票"、"合同"、"机票"等文件类型词
+
+此时你必须：
+1. 使用 filter type = "content_contains"（不是 name_contains）
+2. 把用户说的主题扩展到多个关键词（value 用数组），**5-10个关键词**，包括：
+   - 中文原词
+   - **英文翻译（必填！学校是英文教学，课件/资料大量是英文）**
+   - 核心相关术语（中英文各半，确保中英文资料都能搜到）
+   - 同义表达
+
+**唯一使用 name_contains 的情形：用户明确说"文件名包含XX"、"名字叫XX的文件"。**
+
+关键词扩展示例：
+- "区块链" → ["区块链","blockchain","智能合约","分布式账本","共识机制","比特币","以太坊","去中心化"]
+- "机器学习" → ["机器学习","machine learning","深度学习","神经网络","训练","模型","分类","回归"]
+- "操作系统" → ["操作系统","operating system","进程","线程","内存管理","文件系统","调度","死锁"]
+- "数据库" → ["数据库","database","SQL","MySQL","PostgreSQL","索引","事务","查询优化"]
+- "前端" → ["前端","frontend","React","Vue","JavaScript","CSS","HTML","组件"]
+- "行程单" → ["行程单","机票","航班","Booking","Confirmation","Itinerary","flight","E-ticket","boarding pass","出行"]
+- "发票" → ["发票","invoice","收据","receipt","报销","税务","开票","金额","付款"]
+- "合同" → ["合同","contract","协议","agreement","签约","甲方","乙方","条款"]
+- "人工智能" → ["人工智能","AI","artificial intelligence","神经网络","深度学习","GPT","大模型","NLP","计算机视觉"]
+- "微积分" → ["微积分","calculus","导数","积分","极限","微分","求导","定积分"]
+
+## delete 操作规则（重要！）
+- 用户指定了要删什么文件（有过滤条件）→ 把条件放 filters，**source 设为文件所在目录**，不要把要删的文件名放进 source
+- 用户要删某个目录 → source 设为该目录，filters 为空
+- 用户要删空文件夹/空目录 → params 里加 `"delete_mode": "empty_dirs"`，filters 为空
+
+示例：
+命令："删除 期中.pdf"
+返回：{{"action":"delete","source":".","target":"","filters":[{{"type":"name_contains","value":"期中"}},{{"type":"extension","value":["pdf"]}}],"params":{{}},"summary":"删除名为期中的PDF文件"}}
+
+命令："删除 downloads 文件夹"
+返回：{{"action":"delete","source":"downloads","target":"","filters":[],"params":{{}},"summary":"删除downloads目录"}}
+
+命令："清理所有空文件夹"
+返回：{{"action":"delete","source":".","target":"","filters":[],"params":{{"delete_mode":"empty_dirs"}},"summary":"删除所有空目录"}}
+
 ## 注意事项
 - 扩展名不要加点号，如 "txt" 不是 ".txt"
-- 时间描述：如"上周"→ params.time_range="上周"
 - 大小描述：如"大于100MB"→ filters.type="size", value="100MB"
+- **日期过滤规则（重要！今天日期已告知，请自行计算具体日期）**：
+  - 使用 `filters.type = "modified"`，**必须用 before/after 字段**，不要用 value
+  - "2025年前的文件" → `{{"type":"modified","before":"2025-01-01"}}`
+  - "2023年的文件" → `{{"type":"modified","after":"2023-01-01","before":"2024-01-01"}}`
+  - "去年的文件" → `{{"type":"modified","after":"2025-01-01","before":"2026-01-01"}}`
+  - "最近3个月的文件" → `{{"type":"modified","after":"2026-02-21"}}`（从today往前推）
+  - "30天前的文件" → `{{"type":"modified","before":"2026-04-21"}}`（today减30天）
+- clean 操作必须在 params 里返回 clean_mode 和 days（今天日期已告知，请自行计算）：
+  - 清理临时文件/垃圾文件 → `"clean_mode":"temp"`
+  - 清理空文件 → `"clean_mode":"empty_files"`
+  - 清理空文件夹/空目录 → `"clean_mode":"empty_dirs"`
+  - 清理N天前/某年前的文件 → `"clean_mode":"old", "days": <从今天起往前推的天数>`
+  - 例："清理2025年以前的文件"，今天2026-05-21 → days = 506（2026-05-21 到 2025-01-01 的天数）
+  - 例："清理30天前的文件" → days = 30
+  - 例："清理上个月以前的文件"，今天2026-05-21 → days = 51（到2026-04-01）
 - 常见多动作模式：
   - "新建X文件夹，然后把Y里的文件复制到X" → mkdir + copy
   - "把A中的文件移到B" → mkdir + move
@@ -172,6 +234,38 @@ def _build_prompt(user_input: str) -> str:
 - **重命名规则**：rename 时 source=原路径，target=新名称（不是完整路径）
   - 示例："把名为PDF的文件夹改名为BBF" → source="PDF", target="BBF"
   - 示例："rename D:/file_helper_demo/PDF BBF" → source="D:/file_helper_demo/PDF", target="BBF"
+
+## content_contains 使用场景与示例
+只有当用户在寻找"主题相关的文件"时才用 content_contains。如果用户明确在找文件名中包含某个词的文件（如"文件名包含期中"），仍用 name_contains。
+
+## recursive 规则
+- 默认 recursive=false，只搜索当前目录
+- 只有用户**明确说**"递归"、"所有子文件夹"、"包含子目录"、"全部文件夹"时，才设置 recursive=true
+- "所有文件"、"找所有XX"等泛泛表达**不代表**递归，仍用 recursive=false
+
+命令："找到所有区块链相关文件"
+返回：{{"action":"search","source":".","target":"","filters":[{{"type":"content_contains","value":["区块链","blockchain","智能合约","分布式账本","共识机制","比特币","以太坊","去中心化"]}}],"params":{{"recursive":false}},"summary":"搜索内容与区块链主题相关的文件"}}
+
+命令："递归搜索所有区块链相关文件"
+返回：{{"action":"search","source":".","target":"","filters":[{{"type":"content_contains","value":["区块链","blockchain","智能合约","分布式账本","共识机制","比特币","以太坊","去中心化"]}}],"params":{{"recursive":true}},"summary":"递归搜索内容与区块链主题相关的文件"}}
+
+命令："找机器学习相关的资料"
+返回：{{"action":"search","source":".","target":"","filters":[{{"type":"content_contains","value":["机器学习","machine learning","深度学习","神经网络","训练","模型"]}}],"params":{{"recursive":false}},"summary":"搜索内容与机器学习相关的文件"}}
+
+命令："在所有子文件夹中找机器学习相关的资料"
+返回：{{"action":"search","source":".","target":"","filters":[{{"type":"content_contains","value":["机器学习","machine learning","深度学习","神经网络","训练","模型"]}}],"params":{{"recursive":true}},"summary":"递归搜索内容与机器学习相关的文件"}}
+
+命令："关于操作系统的文件"
+返回：{{"action":"search","source":".","target":"","filters":[{{"type":"content_contains","value":["操作系统","operating system","进程","线程","内存管理","文件系统"]}}],"params":{{"recursive":false}},"summary":"搜索内容与操作系统相关的文件"}}
+
+命令："找到所有的行程单"
+返回：{{"action":"search","source":".","target":"","filters":[{{"type":"content_contains","value":["行程单","机票","航班","Booking","Confirmation","Itinerary","flight","E-ticket","boarding pass","出行"]}}],"params":{{"recursive":false}},"summary":"搜索内容与行程单主题相关的文件"}}
+
+命令："找一下发票"
+返回：{{"action":"search","source":".","target":"","filters":[{{"type":"content_contains","value":["发票","invoice","收据","receipt","报销","税务","开票","金额"]}}],"params":{{"recursive":false}},"summary":"搜索内容与发票相关的文件"}}
+
+命令："把区块链相关的文件移到归档"
+返回：{{"actions":[{{"action":"mkdir","source":"","target":"归档","filters":[],"params":{{}}}},{{"action":"move","source":".","target":"归档","filters":[{{"type":"content_contains","value":["区块链","blockchain","智能合约","分布式账本"]}}],"params":{{"recursive":false}}}}],"summary":"创建归档目录并移动区块链相关文件"}}
 
 请直接返回JSON，不要其他文字："""
 
@@ -206,6 +300,7 @@ def _split_ba_construction(user_input: str) -> list:
 def _call_api(prompt: str) -> Optional[str]:
     api_key = DASHSCOPE_API_KEY or os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
+        print("[DEBUG] 未找到 API Key")
         return None
     try:
         response = Generation.call(
@@ -215,9 +310,12 @@ def _call_api(prompt: str) -> Optional[str]:
             result_format="message",
         )
         if response.status_code != 200:
+            print(f"[DEBUG] API 返回错误: status={response.status_code}, body={response}")
             return None
-        return response.output["choices"][0]["message"]["content"]
-    except Exception:
+        content = response.output["choices"][0]["message"]["content"]
+        return content
+    except Exception as e:
+        print(f"[DEBUG] API 调用异常: {e}")
         return None
 
 
@@ -286,10 +384,12 @@ def ai_only_parse(user_input: str, workspace: str = None) -> Optional[Dict]:
     # 常规解析
     content = _call_api(_build_prompt(user_input))
     if not content:
+        print("[DEBUG] API 返回内容为空")
         return None
 
     json_str = _extract_json(content)
     if not json_str:
+        print(f"[DEBUG] 无法从以下内容提取 JSON:\n{content[:500]}")
         return None
 
     result = json.loads(json_str)
@@ -355,7 +455,14 @@ def _normalize_filters(filters: list) -> list:
             elif isinstance(val, list):
                 val = [v.strip().lower().lstrip(".") if isinstance(v, str) else str(v) for v in val]
 
-        normalized.append({"type": ftype, "value": val})
+        entry = {"type": ftype, "value": val}
+        # 保留 modified 类型的 before/after 字段
+        if ftype in ("modified", "date"):
+            if "before" in f:
+                entry["before"] = f["before"]
+            if "after" in f:
+                entry["after"] = f["after"]
+        normalized.append(entry)
 
     return normalized
 

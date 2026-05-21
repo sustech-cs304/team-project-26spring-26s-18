@@ -14,4 +14,5 @@ class User(Base):
 	email: Mapped[str] = mapped_column(String(255), nullable=True)
 	password: Mapped[str] = mapped_column(String(255), nullable=False)
 	avatarURL: Mapped[str] = mapped_column(String(255), nullable=False)
+	courseConfigURL: Mapped[str] = mapped_column(String(255), nullable=True)
 

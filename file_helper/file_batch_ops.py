@@ -799,36 +799,42 @@ def clean_empty_dirs(directory: str, confirm: bool = True) -> BatchResult:
 
 
 def clean_old_files(directory: str, days: int, to_trash: bool = True,
-                   extensions: List[str] = None, confirm: bool = True) -> BatchResult:
+                   extensions: List[str] = None, confirm: bool = True,
+                   recursive: bool = False) -> BatchResult:
     """
-    清理旧文件
+    清理旧文件（修改时间早于 days 天前的文件）
 
     Args:
         directory: 目录路径
-        days: 多少天前的文件
+        days: 天数阈值，删除修改时间早于此天数的文件
         to_trash: 是否移至回收站（强烈建议 True）
         extensions: 只清理指定扩展名的文件
         confirm: 是否需要确认（默认 True）
+        recursive: 是否递归子目录（默认 False）
 
     Returns:
         BatchResult 对象
     """
     from file_atomic_ops import get_files
+    from datetime import datetime, timedelta
 
-    files = get_files(directory, recursive=True)
+    files = get_files(directory, recursive=recursive)
 
     # 按扩展名过滤
     if extensions:
         files = filter_by_extension(files, extensions)
 
-    # 按日期过滤
-    old_files = filter_by_date(files, days_ago=days)
+    # 计算截止时间，返回修改时间早于截止时间的旧文件
+    cutoff = datetime.now() - timedelta(days=days)
+    old_files = filter_by_date(files, before=cutoff)
 
     if not old_files:
-        print(f"没有找到 {days} 天前的文件")
+        print(f"没有找到修改时间早于 {days} 天前（{cutoff.strftime('%Y-%m-%d')}）的文件")
         return BatchResult()
 
-    # 强制使用回收站，除非明确指定 to_trash=False
+    print(f"\n扫描目录: {directory}{'（含子目录）' if recursive else ''}")
+    print(f"截止日期: {cutoff.strftime('%Y-%m-%d')}（{days} 天前）")
+
     return batch_delete(old_files, to_trash=True, confirm=confirm)
 
 
@@ -948,14 +954,21 @@ def organize_by_course(files: List[str], base_dir: str,
     known_codes = {c['code'] for c in load_courses()}
 
     course_map, other_files = {}, []
+    total = len(files)
 
-    for f in files:
+    print(f"\n开始识别 {total} 个文件的所属学科...")
+    print("-" * 50)
+    for idx, f in enumerate(files, 1):
+        fname = Path(f).name
+        print(f"  [{idx}/{total}] {fname} ... ", end="", flush=True)
         code, name, conf = identify_course_for_file(f, use_ai=use_ai)
         if code != "OTHER":
             folder = get_folder_name(code, name)
             course_map.setdefault(folder, []).append(f"{f} → {folder}/")
+            print(f"→ {name}")
         else:
             other_files.append(f"{f} → 其它/")
+            print("→ 其他（无法识别）")
 
     # ===== 预览模式 =====
     if preview:

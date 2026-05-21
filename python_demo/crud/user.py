@@ -25,6 +25,15 @@ def update_password_by_email(db: Session, email: str, password: str):
 def search_by_email(db: Session, email: str):
 	return db.query(User).filter(User.email == email).first()
 
+# 更新课程配置URL
+def update_course_config_url(db: Session, user_id: int, url: str):
+	user = db.query(User).filter(User.id == user_id).first()
+	if user:
+		user.courseConfigURL = url
+		db.commit()
+		db.refresh(user)
+	return user
+
 # 更新头像URL
 def update_avatar_url(db: Session, user_id: int, avatar_url: str):
 	user = db.query(User).filter(User.id == user_id).first()

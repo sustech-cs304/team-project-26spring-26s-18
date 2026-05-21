@@ -95,7 +95,7 @@ def format_intent(intent):
         lines.append(f"  过滤条件:")
         for f in filters:
             ftype = f['type']
-            display = {k: v for k, v in f.items() if k != 'type'}
+            display = {k: v for k, v in f.items() if k != 'type' and v not in ('', [], None)}
             lines.append(f"    - {ftype}: {display}")
 
     params = intent.get('params', {})
@@ -111,21 +111,30 @@ def main():
     # 创建助手实例
     helper = FileHelper()
 
-    # 默认工作目录
-    default_workspace = "d:/file_helper_demo"
-    if os.path.exists(default_workspace):
-        helper.set_workspace(default_workspace)
-        print(f"[目录] 工作目录: {default_workspace}\n")
+    # 启动时让用户指定工作目录
+    default_workspace = r"D:\file_helper_demo"
+    if not os.path.isdir(default_workspace):
+        default_workspace = os.getcwd()
+    print(f"请输入工作目录（直接回车使用默认目录: {default_workspace}）：", end="")
+    user_input_path = input().strip()
+
+    if user_input_path:
+        if os.path.isdir(user_input_path):
+            workspace = user_input_path
+        else:
+            print(f"[警告] 目录不存在: {user_input_path}，使用当前目录")
+            workspace = default_workspace
     else:
-        print("[警告] 默认测试目录不存在，使用当前目录")
-        print(f"   当前目录: {os.getcwd()}\n")
-        helper.set_workspace(os.getcwd())
+        workspace = default_workspace
+
+    helper.set_workspace(workspace)
+    print(f"[目录] 工作目录: {workspace}\n")
 
     print(f"AI引擎: 百炼 qwen-turbo（网络调用，约2-3秒/次）\n")
 
     while True:
         try:
-            user_input = input(">>> ").strip()
+            user_input = input(f"[{helper.workspace}]\n>>> ").strip()
 
             if not user_input:
                 continue
@@ -162,7 +171,9 @@ def main():
             print("[解析]")
             print("-" * 40)
 
+            print("  正在解析...", end="", flush=True)
             intent = helper.parse(user_input)
+            print("\r" + " " * 20 + "\r", end="", flush=True)  # 清除提示行
 
             if intent:
                 print(format_intent(intent))

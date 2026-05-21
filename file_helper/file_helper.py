@@ -23,6 +23,7 @@ from .file_atomic_ops import (
 from .file_query import (
     filter_by_extension, filter_by_name_contains, filter_by_name_pattern,
     filter_by_size, filter_by_date, filter_by_name_regex,
+    filter_by_content_contains,
     filter_temp_files, filter_empty_files, filter_existing, filter_hidden,
     sort_by_name, sort_by_size, sort_by_date, sort_by_extension,
     group_by_extension, group_by_date, group_by_size,
@@ -150,28 +151,47 @@ class FileHelper:
             source = self.workspace
         if not os.path.isabs(source):
             source = os.path.join(self.workspace, source)
+        # 安全校验：source 必须在 workspace 内，防止误操作扫全盘
+        workspace_abs = os.path.abspath(self.workspace)
+        source_abs_check = os.path.abspath(source)
+        if not source_abs_check.startswith(workspace_abs):
+            source = self.workspace
         recursive = intent.get("params", {}).get("recursive", False)
-        files = get_files(source, recursive)
-
-        # 应用过滤条件（name_contains 支持多关键词 OR 合并）
+        # 应用过滤条件（name_contains / content_contains 支持多关键词 OR 合并）
         filters = intent.get("filters", [])
-        # 合并多个 name_contains 为一次调用（OR 逻辑）
+        print(f"[步骤1] 扫描目录: {source}{'（含子目录）' if recursive else ''}")
+        files = get_files(source, recursive)
+        print(f"[步骤2] 共找到 {len(files)} 个文件，开始过滤...")
+        # 收集所有 name_contains 和 content_contains 关键词
         name_kw_list = []
+        content_kw_list = []
         other_filters = []
         for f in filters:
-            if f.get("type") == "name_contains":
-                val = f.get("value", "")
-                if isinstance(val, dict) and "value" in val:
-                    val = val["value"]
+            ftype = f.get("type")
+            val = f.get("value", "")
+            if isinstance(val, dict) and "value" in val:
+                val = val["value"]
+            if ftype == "name_contains":
                 if isinstance(val, list):
                     name_kw_list.extend(val)
                 else:
                     name_kw_list.append(val)
+            elif ftype == "content_contains":
+                if isinstance(val, list):
+                    content_kw_list.extend(val)
+                else:
+                    content_kw_list.append(val)
             else:
                 other_filters.append(f)
         # 先处理 OR 合并的 name_contains
         if name_kw_list:
             files = filter_by_name_contains(files, name_kw_list)
+        # 内容搜索：文件名 OR 文件内容包含关键词（避免遗漏仅靠标题命名的文件）
+        if content_kw_list:
+            name_hits = set(filter_by_name_contains(files, content_kw_list))
+            content_hits = set(filter_by_content_contains(files, content_kw_list))
+            matched = name_hits | content_hits
+            files = [f for f in files if f in matched]
         # 再处理其他过滤器
         for f in other_filters:
             files = self._apply_filter(files, f)
@@ -201,21 +221,25 @@ class FileHelper:
             return result
 
         if action == ActionType.DELETE:
-            # 计算绝对路径
             source_abs = source
             if not os.path.isabs(source_abs):
                 source_abs = os.path.join(self.workspace, source_abs)
-            
-            # 特殊判断1：删除空文件夹（先找空目录，再删除）
-            if "空" in command and any(k in command for k in ["文件夹", "目录", "空文件夹", "空目录"]):
+
+            params = intent.get("params", {})
+            delete_mode = params.get("delete_mode", "")
+
+            # 有过滤条件 → 只删过滤后的文件，绝不动目录
+            if filters:
+                result = batch_delete(files, confirm=True)
+            # AI 明确指定删空目录
+            elif delete_mode == "empty_dirs":
                 result = clean_empty_dirs(source_abs, confirm=True)
-            # 特殊判断2：source_abs 本身是一个目录 → 直接删除该目录
+            # 无过滤条件且 source 本身是目录 → 删整个目录（需二次确认）
             elif os.path.isdir(source_abs):
                 result = BatchResult()
-                # 确认后再删除
-                print(f"\n⚠️ 危险操作：准备删除目录")
+                print(f"\n⚠️ 危险操作：准备删除整个目录")
                 print("-" * 50)
-                print(f"  - {Path(source_abs).name}")  # 只显示目录名
+                print(f"  - {Path(source_abs).name}")
                 print(f"  完整路径: {source_abs}")
                 print("-" * 50)
                 choice = input("确认删除此目录（包含所有内容）？输入 Y 确认: ").strip().lower()
@@ -286,19 +310,22 @@ class FileHelper:
             else:
                 result = organize_by_type(files, target)
         elif action == ActionType.CLEAN:
-            if "临时" in command or "垃圾" in command:
+            params = intent.get("params", {})
+            clean_mode = params.get("clean_mode", "old")
+            if clean_mode == "temp":
                 result = clean_temp_files(source, confirm=True)
-            elif "空文件" in command:
+            elif clean_mode == "empty_files":
                 result = clean_empty_files(source, confirm=True)
-            elif "空目录" in command:
+            elif clean_mode == "empty_dirs":
                 result = clean_empty_dirs(source, confirm=True)
             else:
-                days = 30
-                for keyword, d in getattr(self.parser, "time_keywords", {}).items():
-                    if keyword in command:
-                        days = d
-                        break
-                result = clean_old_files(source, days, confirm=True)
+                # 有具体过滤条件（如 modified before/after）→ 直接用已过滤的 files
+                if filters:
+                    result = batch_delete(files, confirm=True)
+                else:
+                    days = params.get("days", 30)
+                    recursive = params.get("recursive", False)
+                    result = clean_old_files(source, days, confirm=True, recursive=recursive)
         elif action == ActionType.SEARCH:
             result = BatchResult()
             for f in files:
@@ -363,18 +390,28 @@ class FileHelper:
                 kwargs["max_mb"] = filter_def["max_mb"]
             return filter_by_size(files, **kwargs)
         elif match(FilterType.DATE) or ftype == "date" or ftype == "modified":
+            from datetime import datetime
+            before_str = filter_def.get("before")
+            after_str = filter_def.get("after")
+            before = datetime.fromisoformat(before_str) if before_str else None
+            after = datetime.fromisoformat(after_str) if after_str else None
             days_ago = filter_def.get("days_ago")
-            return filter_by_date(files, days_ago=days_ago)
+            return filter_by_date(files, before=before, after=after, days_ago=days_ago)
         elif match(FilterType.TEMP) or ftype == "temp":
             return filter_temp_files(files)
         elif match(FilterType.EMPTY) or ftype == "empty":
             return filter_empty_files(files)
+        elif ftype == "content_contains":
+            val = filter_def.get("value")
+            if isinstance(val, dict) and "value" in val:
+                val = val["value"]
+            return filter_by_content_contains(files, val)
 
         return files
 
     def parse(self, command: str) -> Dict:
         """解析命令但不执行（纯AI）"""
-        return self.parser.parse(command)
+        return self.parser.parse(command, workspace=self.workspace)
 
     def plan(self, command: str) -> List[Dict]:
         """生成执行计划"""
