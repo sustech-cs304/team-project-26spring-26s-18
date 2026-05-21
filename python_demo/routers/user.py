@@ -127,3 +127,33 @@ async def update_avatar(
 	except Exception as e:
 		print("上传文件失败", e)
 		return Result.error("上传头像失败")
+
+
+@router.post("/fetchCourses")
+async def fetch_courses(
+	user_id: int = Body(..., embed=True),
+	tis_username: str = Body(..., embed=True),
+	tis_password: str = Body(..., embed=True),
+	db: AsyncSession = Depends(get_db)
+):
+	"""
+	从 TIS 获取课程列表，上传到 OSS，URL 存入数据库。
+	"""
+	try:
+		from utils.tis_util import fetch_courses_from_tis, courses_to_oss
+
+		# 1. 登录 TIS 获取课程
+		courses = fetch_courses_from_tis(tis_username, tis_password)
+
+		# 2. 上传到 OSS，得到 URL
+		url = courses_to_oss(user_id, courses)
+
+		# 3. 将 URL 存入数据库
+		await db.run_sync(lambda s: crud_user.update_course_config_url(s, user_id, url))
+
+		return Result.success({"url": url, "course_count": len(courses)})
+	except ValueError as e:
+		return Result.error(str(e))
+	except Exception as e:
+		print("获取课程失败", e)
+		return Result.error("获取课程失败，请检查 TIS 账号密码")
