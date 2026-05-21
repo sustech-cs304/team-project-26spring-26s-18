@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "file-helper"
+version = "0.1.0"
+description = "自然语言文件管理助手"
+requires-python = ">=3.10"
+dependencies = [
+    "dashscope>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["file_helper*"]

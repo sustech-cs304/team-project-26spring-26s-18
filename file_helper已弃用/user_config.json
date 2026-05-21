@@ -1,0 +1,386 @@
+{
+  "courses": [
+    {
+      "code": "IPE106",
+      "name": "思想道德修养与法律基础实践课",
+      "keywords": [
+        "Practice Course of Cultivation of Ethics and Fundamentals of Law"
+      ]
+    },
+    {
+      "code": "GE102",
+      "name": "军事理论",
+      "keywords": [
+        "Military Theory"
+      ]
+    },
+    {
+      "code": "GE104",
+      "name": "军事技能",
+      "keywords": [
+        "Military Skills"
+      ]
+    },
+    {
+      "code": "GE107",
+      "name": "成长通识",
+      "keywords": [
+        "General development practice"
+      ]
+    },
+    {
+      "code": "PHY104B",
+      "name": "基础物理实验",
+      "keywords": [
+        "Experiments of Fundamental Physics"
+      ]
+    },
+    {
+      "code": "IPE100",
+      "name": "习近平新时代中国特色社会主义思想概论",
+      "keywords": [
+        "Introduction to Xi Jinping Thought on Socialism with Chinese Characteristics for a New Era"
+      ]
+    },
+    {
+      "code": "PHY105",
+      "name": "大学物理（上）",
+      "keywords": [
+        "College Physics I"
+      ]
+    },
+    {
+      "code": "CLE022",
+      "name": "SUSTech English II",
+      "keywords": [
+        "SUSTech English II"
+      ]
+    },
+    {
+      "code": "GE131",
+      "name": "体育I",
+      "keywords": [
+        "Physical Education I"
+      ]
+    },
+    {
+      "code": "CS109",
+      "name": "计算机程序设计基础",
+      "keywords": [
+        "Introduction to Computer Programming"
+      ]
+    },
+    {
+      "code": "MA117",
+      "name": "高等数学（上）",
+      "keywords": [
+        "Calculus I"
+      ]
+    },
+    {
+      "code": "BIO102B",
+      "name": "生命科学概论",
+      "keywords": [
+        "Introduction to Life Science"
+      ]
+    },
+    {
+      "code": "IPE107",
+      "name": "马克思主义基本原理实践课",
+      "keywords": []
+    },
+    {
+      "code": "IPE103",
+      "name": "中国近现代史纲要",
+      "keywords": [
+        "The Outline of Modern and Contemporary History of China"
+      ]
+    },
+    {
+      "code": "MA113",
+      "name": "线性代数",
+      "keywords": [
+        "Linear Algebra"
+      ]
+    },
+    {
+      "code": "CLE023",
+      "name": "SUSTech English III",
+      "keywords": [
+        "SUSTech English III"
+      ]
+    },
+    {
+      "code": "PHY106",
+      "name": "大学物理（下）",
+      "keywords": [
+        "College Physics II"
+      ]
+    },
+    {
+      "code": "HUM032",
+      "name": "写作与交流",
+      "keywords": [
+        "Writing and Communication Skills"
+      ]
+    },
+    {
+      "code": "CH105",
+      "name": "大学化学",
+      "keywords": [
+        "Chemistry：the Central Science"
+      ]
+    },
+    {
+      "code": "MA127",
+      "name": "高等数学（下）",
+      "keywords": [
+        "Calculus II"
+      ]
+    },
+    {
+      "code": "GE132",
+      "name": "体育II",
+      "keywords": [
+        "Physical Education II"
+      ]
+    },
+    {
+      "code": "IPE109",
+      "name": "中国近现代史纲要实践课",
+      "keywords": []
+    },
+    {
+      "code": "CLE030",
+      "name": "EAP",
+      "keywords": [
+        "English for Academic Purposes"
+      ]
+    },
+    {
+      "code": "GE331",
+      "name": "体育Ⅴ",
+      "keywords": [
+        "Physical EducationⅤ"
+      ]
+    },
+    {
+      "code": "IPE111",
+      "name": "思想道德与法治",
+      "keywords": [
+        "Morality and Rule of Law"
+      ]
+    },
+    {
+      "code": "IPE104",
+      "name": "毛泽东思想和中国特色社会主义理论体系概论",
+      "keywords": [
+        "Mao Zedong Thought and Introduction to the Theoretical System of Socialism with Chinese Characteristics"
+      ]
+    },
+    {
+      "code": "MA212",
+      "name": "概率论与数理统计",
+      "keywords": [
+        "Probability and Statistics"
+      ]
+    },
+    {
+      "code": "CS307",
+      "name": "数据库原理",
+      "keywords": [
+        "Principles of Database Systems"
+      ]
+    },
+    {
+      "code": "CS217",
+      "name": "数据结构与算法分析（H）",
+      "keywords": [
+        "Data Structures and Algorithm Analysis(H)"
+      ]
+    },
+    {
+      "code": "CS207",
+      "name": "数字逻辑",
+      "keywords": [
+        "Digital Logic"
+      ]
+    },
+    {
+      "code": "CS202",
+      "name": "计算机组成原理",
+      "keywords": [
+        "Computer Organization"
+      ]
+    },
+    {
+      "code": "MED119",
+      "name": "饮食与健康",
+      "keywords": [
+        "Diet and Health"
+      ]
+    },
+    {
+      "code": "IPE112",
+      "name": "马克思主义基本原理",
+      "keywords": [
+        "The Principles of Marxism"
+      ]
+    },
+    {
+      "code": "IPE105",
+      "name": "形势与政策",
+      "keywords": [
+        "Situation and Policy"
+      ]
+    },
+    {
+      "code": "CLE051",
+      "name": "基础法语",
+      "keywords": [
+        "Elementary French"
+      ]
+    },
+    {
+      "code": "GE232",
+      "name": "体育IV",
+      "keywords": [
+        "Physical Education IV"
+      ]
+    },
+    {
+      "code": "CS208",
+      "name": "算法设计与分析",
+      "keywords": [
+        "Algorithm Design and Analysis"
+      ]
+    },
+    {
+      "code": "CS201",
+      "name": "离散数学",
+      "keywords": [
+        "Discrete Mathematics"
+      ]
+    },
+    {
+      "code": "HUM082",
+      "name": "宋词鉴赏及英译批评",
+      "keywords": [
+        "The Appreciation of Classical Chinese Song Lyrics and English Translation Criticism"
+      ]
+    },
+    {
+      "code": "GEM038",
+      "name": "宋代院体工笔花鸟画临习",
+      "keywords": [
+        "The Study of Courtyard Gongbi Bird-and-Flower Painting in Song Dynasty"
+      ]
+    },
+    {
+      "code": "CS219",
+      "name": "计算机高级程序设计",
+      "keywords": [
+        "Advanced Programming"
+      ]
+    },
+    {
+      "code": "SS167",
+      "name": "人类演化简史",
+      "keywords": [
+        "Human Evolution"
+      ]
+    },
+    {
+      "code": "CS209A",
+      "name": "计算机系统设计及应用A",
+      "keywords": [
+        "Computer System Design and Applications A"
+      ]
+    },
+    {
+      "code": "CS305",
+      "name": "计算机网络",
+      "keywords": [
+        "Computer Networks"
+      ]
+    },
+    {
+      "code": "CS321",
+      "name": "创新实践I",
+      "keywords": [
+        "Group Projects I"
+      ]
+    },
+    {
+      "code": "CS402",
+      "name": "计算机科学与技术前沿讲座 IV",
+      "keywords": [
+        "Frontier Seminars in Computer Science and Technology IV"
+      ]
+    },
+    {
+      "code": "GE231",
+      "name": "体育III",
+      "keywords": [
+        "Physical Education III"
+      ]
+    },
+    {
+      "code": "CS303",
+      "name": "人工智能",
+      "keywords": [
+        "Artificial Intelligence"
+      ]
+    },
+    {
+      "code": "SS178",
+      "name": "亚洲旧石器时代考古学",
+      "keywords": [
+        "Palaeolithic Archaeology of Asia"
+      ]
+    },
+    {
+      "code": "CS326",
+      "name": "创新实践II",
+      "keywords": [
+        "Group Projects II"
+      ]
+    },
+    {
+      "code": "GE332",
+      "name": "体育VI",
+      "keywords": [
+        "Physical EducationVI"
+      ]
+    },
+    {
+      "code": "CS304",
+      "name": "软件工程",
+      "keywords": [
+        "Software Engineering"
+      ]
+    },
+    {
+      "code": "CS302",
+      "name": "计算机操作系统",
+      "keywords": [
+        "Operating Systems"
+      ]
+    },
+    {
+      "code": "CS340",
+      "name": "计算伦理学",
+      "keywords": [
+        "Computational Ethics"
+      ]
+    },
+    {
+      "code": "GE2100",
+      "name": "市场营销管理",
+      "keywords": [
+        "Marketing"
+      ]
+    }
+  ],
+  "note": "课程列表。你可以手动编辑此文件添加/删除课程，也可以通过 course_config.py 的 API 管理。"
+}
