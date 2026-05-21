@@ -300,7 +300,6 @@ def _split_ba_construction(user_input: str) -> list:
 def _call_api(prompt: str) -> Optional[str]:
     api_key = DASHSCOPE_API_KEY or os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
-        print("[DEBUG] 未找到 API Key")
         return None
     try:
         response = Generation.call(
@@ -310,12 +309,12 @@ def _call_api(prompt: str) -> Optional[str]:
             result_format="message",
         )
         if response.status_code != 200:
-            print(f"[DEBUG] API 返回错误: status={response.status_code}, body={response}")
+            print(f"[错误] AI 接口异常: {response.status_code} - {response.output}")
             return None
         content = response.output["choices"][0]["message"]["content"]
         return content
     except Exception as e:
-        print(f"[DEBUG] API 调用异常: {e}")
+        print(f"[错误] AI 调用失败: {e}")
         return None
 
 
@@ -384,12 +383,11 @@ def ai_only_parse(user_input: str, workspace: str = None) -> Optional[Dict]:
     # 常规解析
     content = _call_api(_build_prompt(user_input))
     if not content:
-        print("[DEBUG] API 返回内容为空")
         return None
 
     json_str = _extract_json(content)
     if not json_str:
-        print(f"[DEBUG] 无法从以下内容提取 JSON:\n{content[:500]}")
+        print(f"[错误] AI 返回内容无法解析为指令，原始内容: {content[:200]}")
         return None
 
     result = json.loads(json_str)

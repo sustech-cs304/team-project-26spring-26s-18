@@ -166,42 +166,83 @@ def main():
                     print(f"[ERROR] 目录不存在: {new_path}")
                 continue
 
-            # 解析命令
-            print("-" * 40)
-            print("[解析]")
-            print("-" * 40)
-
-            print("  正在解析...", end="", flush=True)
-            intent = helper.parse(user_input)
-            print("\r" + " " * 20 + "\r", end="", flush=True)  # 清除提示行
-
-            if intent:
-                print(format_intent(intent))
-            else:
-                print("  [警告] 无法理解此命令")
-                continue
-
-            # 干跑模式
+            # 干跑模式（仅解析，不执行）
             if user_input.lower().startswith('dry '):
+                print("  正在解析...", end="", flush=True)
+                intent = helper.parse(user_input[4:].strip())
+                print("\r" + " " * 20 + "\r", end="", flush=True)
+                print(format_intent(intent))
                 print("\n[干跑模式] 未执行\n")
                 continue
 
-            # 执行
-            print("\n" + "-" * 40)
-            print("[执行]")
+            # Agent 执行（ReAct 循环）
             print("-" * 40)
-            result = helper.run(user_input, verbose=True)
+            print("[Agent 推理中...]")
+            print("-" * 40)
 
-            # search 操作：输出匹配的文件名
-            if intent.get("action") == "search":
-                found = result.success
-                if found:
-                    print(f"\n找到 {len(found)} 个文件：")
-                    for item in found:
-                        path = item["path"] if isinstance(item, dict) else item
-                        print(f"  - {os.path.basename(path)}")
-                else:
-                    print("\n没有找到匹配的文件")
+            from file_helper.agent import FileAgent
+            agent = FileAgent(helper.workspace)
+            found_files = []
+
+            for step in agent.run(user_input):
+                stype = step["type"]
+
+                if stype == "thought":
+                    print(f"\n💭 {step['content']}")
+
+                elif stype == "action":
+                    tool = step["tool"]
+                    args = step["args"]
+                    # 只打印关键参数，不打印完整文件列表
+                    brief = {k: v for k, v in args.items() if k != "file_paths"}
+                    if "file_paths" in args:
+                        brief["file_count"] = len(args["file_paths"])
+                    print(f"\n🔧 调用工具: {tool}  参数: {brief}")
+
+                elif stype == "observation":
+                    res = step["result"]
+                    if res.get("requires_confirmation"):
+                        pass  # confirm_required 会单独处理
+                    elif res.get("success") is False:
+                        print(f"   ❌ {res.get('error', '执行失败')}")
+                    else:
+                        count = res.get("count") or res.get("success_count") or res.get("file_count", 0)
+                        msg = res.get("message") or f"完成，共 {count} 个文件"
+                        print(f"   ✅ {msg}")
+                        # 收集搜索结果
+                        if "files" in res and isinstance(res["files"], list) and res["files"]:
+                            if isinstance(res["files"][0], str) and os.path.exists(res["files"][0]):
+                                found_files = res["files"]
+
+                elif stype == "confirm_required":
+                    files_to_act = step["files"]
+                    action_label = "删除" if step["action"] == "delete" else "移动"
+                    print(f"\n⚠️  {action_label} {len(files_to_act)} 个文件：")
+                    for f in files_to_act[:20]:
+                        print(f"   - {f['name']}")
+                    if len(files_to_act) > 20:
+                        print(f"   ... 共 {len(files_to_act)} 个")
+                    choice = input(f"\n确认{action_label}？输入 Y 确认: ").strip().lower()
+                    result = agent.confirm(choice == "y")
+                    if result["success"]:
+                        skipped = result.get('skipped_count', 0)
+                        skip_str = f"  跳过: {skipped}" if skipped else ""
+                        print(f"✅ {result['message']}  成功: {result.get('success_count', 0)}  失败: {result.get('failed_count', 0)}{skip_str}")
+                    else:
+                        print(f"❌ {result['message']}")
+
+                elif stype == "done":
+                    if step.get("summary"):
+                        print(f"\n✅ {step['summary']}")
+
+                elif stype == "error":
+                    print(f"\n❌ {step['message']}")
+
+            # 展示找到的文件列表
+            if found_files:
+                print(f"\n找到 {len(found_files)} 个文件：")
+                for f in found_files:
+                    print(f"  - {os.path.basename(f)}")
 
             print(f"\n[完成]")
 

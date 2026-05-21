@@ -1,5 +1,3 @@
-import time
-print("[启动分析] routers/user.py 开始导入", time.time())
 from utils.oss_util import OSSUtil
 import base64
 

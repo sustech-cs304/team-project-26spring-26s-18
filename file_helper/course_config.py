@@ -424,13 +424,21 @@ def batch_classify_courses(files: list, batch_size: int = 30) -> dict:
                 continue
             parsed = json.loads(match.group(0))
 
+            # 建立 code → 官方名称 的查找表
+            code_to_name = {c["code"].lower(): c["name"] for c in courses}
+
             for item in parsed:
                 idx = item.get("idx", 0) - 1
                 if 0 <= idx < len(batch):
                     code = item.get("course_code", "Unknown")
                     name = item.get("course_name", "Unknown")
                     if code and code != "Unknown":
-                        results[batch[idx]] = {"course_code": code, "course_name": name}
+                        # 用 known courses 里的官方名称，避免 AI 返回不一致的变体
+                        canonical = code_to_name.get(code.lower())
+                        results[batch[idx]] = {
+                            "course_code": code,
+                            "course_name": canonical if canonical else name,
+                        }
                     else:
                         results[batch[idx]] = "OTHER"
 

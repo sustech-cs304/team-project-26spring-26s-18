@@ -708,7 +708,7 @@ def clean_temp_files(directory: str, to_trash: bool = True, confirm: bool = True
     Returns:
         BatchResult 对象
     """
-    from file_atomic_ops import get_files
+    from .file_atomic_ops import get_files
 
     files = get_files(directory, recursive=True)
     temp_files = filter_temp_files(files)
@@ -733,7 +733,7 @@ def clean_empty_files(directory: str, to_trash: bool = True, confirm: bool = Tru
     Returns:
         BatchResult 对象
     """
-    from file_atomic_ops import get_files
+    from .file_atomic_ops import get_files
 
     files = get_files(directory, recursive=True)
     empty_files = filter_empty_files(files)
@@ -757,7 +757,7 @@ def clean_empty_dirs(directory: str, confirm: bool = True) -> BatchResult:
     Returns:
         BatchResult 对象
     """
-    from file_atomic_ops import get_dirs, is_empty_dir, delete_dir
+    from .file_atomic_ops import get_dirs, is_empty_dir, delete_dir
 
     result = BatchResult()
     dirs = get_dirs(directory, recursive=True)
@@ -815,7 +815,7 @@ def clean_old_files(directory: str, days: int, to_trash: bool = True,
     Returns:
         BatchResult 对象
     """
-    from file_atomic_ops import get_files
+    from .file_atomic_ops import get_files
     from datetime import datetime, timedelta
 
     files = get_files(directory, recursive=recursive)
@@ -851,7 +851,7 @@ def clean_large_files(directory: str, size_mb: int,
     Returns:
         BatchResult 对象
     """
-    from file_atomic_ops import get_files
+    from .file_atomic_ops import get_files
 
     files = get_files(directory, recursive=True)
     large_files = filter_by_size(files, min_mb=size_mb)
@@ -906,7 +906,7 @@ def sync_files(src_dir: str, dst_dir: str,
     Returns:
         BatchResult 对象
     """
-    from file_atomic_ops import get_files
+    from .file_atomic_ops import get_files
 
     result = BatchResult()
     ensure_dir(dst_dir)
