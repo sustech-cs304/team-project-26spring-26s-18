@@ -201,18 +201,22 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "organize_files",
-            "description": "整理文件到分类子目录",
+            "description": "整理文件到分类子目录。可以用 source_dir 指定来源目录（自动读取其中所有文件），也可以用 file_paths 指定具体文件列表",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "source_dir": {
+                        "type": "string",
+                        "description": "来源目录，整理该目录下所有文件。与 file_paths 二选一"
+                    },
                     "file_paths": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "要整理的文件完整路径列表"
+                        "description": "要整理的文件完整路径列表。与 source_dir 二选一"
                     },
                     "target_dir": {
                         "type": "string",
-                        "description": "整理后文件存放的根目录"
+                        "description": "整理后文件存放的根目录（不填则整理到来源目录本身）"
                     },
                     "mode": {
                         "type": "string",
@@ -220,7 +224,7 @@ TOOLS = [
                         "description": "分类方式：type=按文件类型, date=按日期, size=按大小, course=按学科课程"
                     }
                 },
-                "required": ["file_paths", "target_dir", "mode"]
+                "required": ["mode"]
             }
         }
     },
@@ -272,14 +276,20 @@ class FileAgent:
             {
                 "role": "system",
                 "content": (
-                    f"你是一个文件管理助手。今天是 {date.today()}。"
-                    f"工作目录：{self.workspace}。\n"
-                    "请通过调用工具完成用户的文件管理任务。\n"
-                    "每次调用工具前，先用中文简要解释你的思考。\n"
+                    f"你是一个文件管理助手，采用 ReAct（推理+行动）模式工作。今天是 {date.today()}。"
+                    f"工作目录：{self.workspace}。\n\n"
+                    "【强制要求】每次调用工具前，必须先在 content 字段输出你的推理过程，格式：\n"
+                    "思考：[分析用户需求，说明为什么要调用这个工具，预期会得到什么结果]\n"
+                    "每次收到工具结果后，也必须在 content 字段输出观察总结，格式：\n"
+                    "观察：[描述工具返回了什么，是否符合预期，下一步怎么做]\n"
+                    "这些推理过程会直接展示给用户，请用中文清晰表达。\n\n"
                     "重要原则：\n"
                     "1. 【并行工具调用】可以在一次回复中同时调用多个工具，能并行的就并行\n"
                     "   例如：'创建A，把B里文件复制到A' → 第一轮同时 create_directory(A) + search_files(B)，第二轮 copy_files\n"
-                    "2. 【不要多余探索】路径直接用，不必先 list_directory 验证\n"
+                    "2. 【路径名称提取】用户说'XX文件夹'、'XX目录'、'XX文件夹里'时，路径只取'XX'，不要把'文件夹'/'目录'带进路径\n"
+                    "   例：'整理11文件夹' → path='11'，不是'11文件夹'\n"
+                    "   例：'把cp文件夹的文件移到33' → source_dir='cp', target_dir='33'\n"
+                    "3. 【不要多余探索】路径直接用，不必先 list_directory 验证\n"
                     "3. 【复制 vs 移动】copy_files=原文件保留；move_files=原文件删除，不要混淆\n"
                     "4. 【递归搜索】search_files 默认 recursive=false；只有用户明确说'递归'、'所有子文件夹'时才设为 true\n"
                     "5. 【语义搜索关键词扩展】当用户找'XX相关文件'、'关于XX的文件'时：\n"
@@ -346,6 +356,21 @@ class FileAgent:
                 obs = self._execute_tool(tool_name, tool_args)
                 yield {"type": "observation", "result": obs}
 
+                # 按课程整理：先询问是否爬取 TIS，暂停循环
+                if obs.get("requires_tis"):
+                    self._pending = {
+                        "type": "tis_organize",
+                        "files": obs["files"],
+                        "target_dir": obs["target_dir"],
+                    }
+                    yield {
+                        "type": "tis_required",
+                        "files_count": len(obs["files"]),
+                        "target_dir": obs["target_dir"],
+                        "message": obs["message"],
+                    }
+                    return  # 暂停，等待 TIS 获取后调用 resume_after_tis()
+
                 # 危险操作需要确认：存储待执行操作，暂停循环
                 if obs.get("requires_confirmation"):
                     self._pending = {
@@ -356,6 +381,7 @@ class FileAgent:
                     yield {
                         "type": "confirm_required",
                         "action": obs["action"],
+                        "target_dir": obs.get("target_dir"),
                         "files": [
                             {"name": Path(f).name, "path": f}
                             for f in obs["files"]
@@ -395,7 +421,7 @@ class FileAgent:
                 target = op.get("target_dir") or self.workspace
                 if not os.path.isabs(target):
                     target = os.path.join(self.workspace, target)
-                result: BatchResult = batch_move(files, target)
+                result: BatchResult = batch_move(files, target, overwrite=True)
             else:
                 return {"success": False, "message": f"未知操作: {action}"}
 
@@ -476,6 +502,25 @@ class FileAgent:
                 return {"success": False, "error": f"未知工具: {name}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def resume_after_tis(self) -> dict:
+        """TIS 获取完成后继续执行课程整理"""
+        if not self._pending or self._pending.get("type") != "tis_organize":
+            return {"success": False, "message": "没有待处理的整理操作"}
+
+        op = self._pending
+        self._pending = None
+
+        try:
+            from .file_batch_ops import organize_by_course
+            result = organize_by_course(op["files"], op["target_dir"])
+            return {
+                "success": True,
+                "success_count": len(result.success),
+                "failed_count": len(result.failed),
+            }
+        except Exception as e:
+            return {"success": False, "message": str(e)}
 
     def _tool_list_directory(self, args: dict) -> dict:
         from .file_atomic_ops import get_files, get_dirs
@@ -629,12 +674,19 @@ class FileAgent:
         from .file_batch_ops import (
             organize_by_type, organize_by_date, organize_by_size, organize_by_course,
         )
-        files = args.get("file_paths", [])
-        target = self._resolve_path(args.get("target_dir", "."))
+        # 支持 source_dir 或 file_paths
+        files = self._get_files_from_args(args)
+        # target_dir 默认等于 source_dir（整理到来源目录本身）
+        if args.get("target_dir"):
+            target = self._resolve_path(args["target_dir"])
+        elif args.get("source_dir"):
+            target = self._resolve_path(args["source_dir"])
+        else:
+            target = self.workspace
         mode = args.get("mode", "type")
 
         if not files:
-            return {"success": False, "error": "文件列表为空"}
+            return {"success": False, "error": "文件列表为空，请检查来源目录是否存在且有文件"}
 
         if mode == "type":
             result = organize_by_type(files, target)
@@ -643,6 +695,19 @@ class FileAgent:
         elif mode == "size":
             result = organize_by_size(files, target)
         elif mode == "course":
+            # 检查是否已有课程数据；没有才需要 TIS 登录
+            try:
+                from .course_config import load_courses
+                existing = load_courses()
+            except Exception:
+                existing = []
+            if not existing:
+                return {
+                    "requires_tis": True,
+                    "files": files,
+                    "target_dir": target,
+                    "message": f"尚未配置课程数据（共 {len(files)} 个文件待整理），是否从 TIS 获取课程信息以提高分类准确率？",
+                }
             result = organize_by_course(files, target)
         else:
             return {"success": False, "error": f"不支持的整理模式: {mode}"}

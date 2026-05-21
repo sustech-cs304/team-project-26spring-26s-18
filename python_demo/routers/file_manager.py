@@ -20,6 +20,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Query
 from fastapi.responses import StreamingResponse
+from utils.Result import Result
 
 # 将仓库根目录加入 sys.path，使 file_helper 包可被导入
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -141,11 +142,24 @@ async def _execute_stream(command: str, workspace: str, operation_id: str):
             for step in agent.run(command):
                 stype = step["type"]
 
-                if stype == "confirm_required":
+                if stype == "tis_required":
+                    # 存储待整理操作，供 /file/resumeOrganize 使用
+                    _pending[operation_id] = {
+                        "type": "tis_organize",
+                        "files": step.get("files", []),
+                        "target_dir": step.get("target_dir"),
+                        "workspace": workspace,
+                    }
+                    loop.call_soon_threadsafe(q.put_nowait, {
+                        **step,
+                        "operation_id": operation_id,
+                    })
+                elif stype == "confirm_required":
                     # 存储待确认操作，供 /file/confirm 使用
                     _pending[operation_id] = {
                         "action": step["action"],
                         "files": [f["path"] for f in step["files"]],
+                        "target_dir": step.get("target_dir"),
                         "workspace": workspace,
                     }
                     loop.call_soon_threadsafe(q.put_nowait, {
@@ -217,12 +231,12 @@ async def confirm(
     confirmed=false → 取消操作
     """
     if operation_id not in _pending:
-        return {"code": 404, "msg": "操作已过期或不存在，请重新执行命令", "data": None}
+        return Result.error("操作已过期或不存在，请重新执行命令")
 
     op = _pending.pop(operation_id)
 
     if not confirmed:
-        return {"code": 200, "msg": "已取消", "data": None}
+        return Result.success({"success_count": 0, "failed_count": 0, "skipped_count": 0, "cancelled": True})
 
     try:
         from file_helper.file_batch_ops import batch_delete, batch_move, BatchResult
@@ -236,27 +250,20 @@ async def confirm(
             target = op.get("target_dir") or op["workspace"]
             if not os.path.isabs(target):
                 target = os.path.join(op["workspace"], target)
-            result: BatchResult = batch_move(files, target)
+            result: BatchResult = batch_move(files, target, overwrite=True)
         elif action == "clean":
             result: BatchResult = batch_delete(files, to_trash=True, confirm=False)
         else:
-            return {"code": 400, "msg": f"不支持的操作: {action}", "data": None}
+            return Result.error(f"不支持的操作: {action}")
 
-        return {
-            "code": 200,
-            "msg": "执行成功",
-            "data": {
-                "success_count": len(result.success),
-                "failed_count": len(result.failed),
-                "failed": [
-                    {"path": f["path"] if isinstance(f, dict) else f,
-                     "reason": f.get("reason", "") if isinstance(f, dict) else ""}
-                    for f in result.failed
-                ],
-            },
-        }
+        skipped = len(result.skipped) if hasattr(result, 'skipped') else 0
+        return Result.success({
+            "success_count": len(result.success),
+            "failed_count": len(result.failed),
+            "skipped_count": skipped,
+        })
     except Exception as e:
-        return {"code": 500, "msg": f"执行失败: {e}", "data": None}
+        return Result.error(f"执行失败: {e}")
 
 
 @router.get("/tree")
@@ -268,12 +275,8 @@ async def tree(
     获取指定路径的目录树（用于右侧资源管理器）。
     """
     if not os.path.exists(path):
-        return {"code": 404, "msg": f"路径不存在: {path}", "data": None}
-    return {
-        "code": 200,
-        "msg": "ok",
-        "data": _build_tree(path, depth=max(1, min(depth, 5))),
-    }
+        return Result.error(f"路径不存在: {path}")
+    return Result.success(_build_tree(path, depth=max(1, min(depth, 5))))
 
 
 @router.post("/workspace")
@@ -284,7 +287,7 @@ async def workspace(
     验证工作目录是否存在，返回目录基本信息。
     """
     if not os.path.isdir(path):
-        return {"code": 400, "msg": f"目录不存在: {path}", "data": None}
+        return Result.error(f"目录不存在: {path}")
 
     p = Path(path)
     try:
@@ -292,12 +295,108 @@ async def workspace(
     except Exception:
         file_count = -1
 
-    return {
-        "code": 200,
-        "msg": "ok",
-        "data": {
-            "path": str(p.resolve()),
-            "name": p.name,
-            "file_count": file_count,
-        },
-    }
+    return Result.success({
+        "path": str(p.resolve()),
+        "name": p.name,
+        "file_count": file_count,
+    })
+
+
+# ─────────────────────────────────────────────
+# TIS 课程爬取（SSE 流式推送）
+# ─────────────────────────────────────────────
+
+async def _fetch_tis_stream(tis_username: str, tis_password: str, operation_id: str):
+    """SSE 生成器：运行 TIS 爬虫，边爬边推送日志，完成后更新 user_config.json"""
+    loop = asyncio.get_event_loop()
+    q: asyncio.Queue = asyncio.Queue()
+
+    class _TISCapture(io.TextIOBase):
+        def write(self, text: str):
+            if text and text.strip():
+                loop.call_soon_threadsafe(q.put_nowait, {
+                    "type": "log",
+                    "message": text.rstrip("\n"),
+                })
+            return len(text) if text else 0
+        def flush(self): pass
+
+    def _run():
+        old_stdout = sys.stdout
+        sys.stdout = _TISCapture()
+        try:
+            from utils.tis_util import fetch_courses_from_tis
+            import json as _json
+
+            courses = fetch_courses_from_tis(tis_username, tis_password)
+
+            # 更新 file_helper/user_config.json
+            config_path = os.path.join(_REPO_ROOT, "file_helper", "user_config.json")
+            config = {"courses": []}
+            if os.path.exists(config_path):
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = _json.load(f)
+            config["courses"] = courses
+            with open(config_path, "w", encoding="utf-8") as f:
+                _json.dump(config, f, ensure_ascii=False, indent=2)
+
+            print(f"[完成] 课程数据已更新，共 {len(courses)} 门课程")
+            loop.call_soon_threadsafe(q.put_nowait, {
+                "type": "tis_done",
+                "course_count": len(courses),
+                "operation_id": operation_id,
+            })
+        except ValueError as e:
+            loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "message": str(e)})
+        except Exception as e:
+            loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "message": f"TIS 获取失败: {e}"})
+        finally:
+            sys.stdout = old_stdout
+            loop.call_soon_threadsafe(q.put_nowait, None)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+    while True:
+        msg = await q.get()
+        if msg is None:
+            break
+        yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+
+    yield f"data: {json.dumps({'type': 'end'}, ensure_ascii=False)}\n\n"
+
+
+@router.post("/fetchTIS")
+async def fetch_tis(
+    tis_username: str = Body(..., embed=True),
+    tis_password: str = Body(..., embed=True),
+    operation_id: str = Body(..., embed=True),
+):
+    """SSE：运行 TIS 爬虫，实时推送日志到思维链，完成后更新课程数据"""
+    return StreamingResponse(
+        _fetch_tis_stream(tis_username, tis_password, operation_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
+@router.post("/resumeOrganize")
+async def resume_organize(
+    operation_id: str = Body(..., embed=True),
+):
+    """TIS 获取成功后，继续执行课程整理操作"""
+    if operation_id not in _pending:
+        return Result.error("操作已过期，请重新执行命令")
+
+    op = _pending.pop(operation_id)
+    if op.get("type") != "tis_organize":
+        return Result.error("操作类型不匹配")
+
+    try:
+        from file_helper.file_batch_ops import organize_by_course
+        result = organize_by_course(op["files"], op["target_dir"])
+        return Result.success({
+            "success_count": len(result.success),
+            "failed_count": len(result.failed),
+        })
+    except Exception as e:
+        return Result.error(f"整理失败: {e}")

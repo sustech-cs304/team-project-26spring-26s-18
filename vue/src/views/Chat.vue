@@ -30,8 +30,111 @@
     
     <!-- 右侧对话界面 -->
     <div class="chat-main">
-      <!-- 对话内容区域 -->
-      <div class="chat-content" ref="chatContentRef">
+
+      <!-- ══ TIS 弹窗 ══ -->
+      <div v-if="fmTisDialog" class="fm-tis-overlay">
+        <div class="fm-tis-dialog">
+          <div class="fm-tis-title">📚 获取课程数据</div>
+          <p class="fm-tis-desc">{{ fmTisDialog.message }}</p>
+          <template v-if="!fmTisFetching">
+            <div class="fm-tis-fields">
+              <input v-model="fmTisUsername" class="fm-dir-input" placeholder="SUSTech 学号" />
+              <input v-model="fmTisPassword" class="fm-dir-input" type="password" placeholder="密码" />
+            </div>
+            <div class="fm-tis-actions">
+              <button class="fm-btn-primary" @click="fmStartTIS">开始获取</button>
+              <button class="fm-btn-cancel" @click="fmCancelTIS">取消整理</button>
+            </div>
+          </template>
+          <template v-else>
+            <div class="fm-tis-log" ref="fmTisLogRef">
+              <div v-for="(line, i) in fmTisLogs" :key="i" class="fm-tis-line">{{ line }}</div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- ══ 文件管理模式内容区 ══ -->
+      <div v-if="selectedMode === 'files'" class="fm-body">
+        <!-- 工作目录栏 -->
+        <div class="fm-topbar">
+          <span class="fm-label">工作目录</span>
+          <input v-model="fmWorkspace" class="fm-dir-input" placeholder="输入工作目录路径" @keyup.enter="fmSetWorkspace" />
+          <button class="fm-set-btn" @click="fmSetWorkspace">设置</button>
+          <span v-if="fmWorkspaceInfo" class="fm-workspace-meta">{{ fmWorkspaceInfo.name }} · {{ fmWorkspaceInfo.file_count }} 个文件</span>
+        </div>
+
+        <!-- 三栏 -->
+        <div class="fm-panels">
+          <!-- 左列：思维链 + 文件列表 -->
+          <div class="fm-left-col">
+            <!-- 思维链 -->
+            <div class="fm-panel fm-chain-panel">
+              <div class="fm-panel-hd">
+                🧠 Agent 思维链
+                <span v-if="fmRunning" class="fm-dot"></span>
+              </div>
+              <div class="fm-chain-scroll" ref="fmChainRef">
+                <div v-if="fmChain.length === 0" class="fm-empty">执行命令后，Agent 的推理过程会在这里实时显示</div>
+                <div v-for="(s, i) in fmChain" :key="i" class="fm-step" :class="`fm-step-${s.type}`">
+                  <span class="fm-step-icon">{{ fmStepIcon(s.type) }}</span>
+                  <span class="fm-step-body">
+                    <template v-if="s.type === 'action'"><b>{{ s.tool }}</b><span class="fm-step-args">{{ fmFormatArgs(s.args) }}</span></template>
+                    <template v-else-if="s.type === 'observation'">{{ fmFormatObs(s.result) }}</template>
+                    <template v-else-if="s.type === 'thought'">{{ s.content }}</template>
+                    <template v-else-if="s.type === 'done'">{{ s.summary }}</template>
+                    <template v-else-if="s.type === 'error'">{{ s.message }}</template>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 文件列表 / 确认 -->
+            <div class="fm-panel fm-files-panel" :class="{ 'fm-panel-warn': fmPending }">
+              <div class="fm-panel-hd">
+                <span v-if="fmPending">⚠️ 确认{{ fmPending.action === 'delete' ? '删除' : '移动' }} {{ fmPending.files.length }} 个文件</span>
+                <span v-else>📄 文件列表 <span v-if="fmFiles.length" class="fm-count">{{ fmFiles.length }} 个</span></span>
+              </div>
+              <div class="fm-files-scroll">
+                <div v-if="!fmPending && fmFiles.length === 0" class="fm-empty">搜索或操作的文件会在这里显示</div>
+                <div v-for="(f, i) in fmPending ? fmPending.files : fmFiles" :key="i" class="fm-file-row" :class="{ 'fm-file-danger': fmPending }">
+                  <span class="fm-file-icon">{{ fmFileIcon(f.name || f) }}</span>
+                  <span class="fm-file-nm">{{ f.name || f }}</span>
+                </div>
+                <div v-if="fmPending" class="fm-confirm-bar">
+                  <button class="fm-btn-danger" @click="fmConfirm(true)">✅ 确认{{ fmPending.action === 'delete' ? '删除' : '移动' }}</button>
+                  <button class="fm-btn-cancel" @click="fmConfirm(false)">❌ 取消</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右列：文件树 -->
+          <div class="fm-right-col">
+            <div class="fm-panel fm-tree-panel">
+              <div class="fm-panel-hd">
+                📁 文件资源管理器
+                <button class="fm-refresh" @click="fmRefreshTree">↻</button>
+              </div>
+              <div class="fm-tree-scroll">
+                <div v-if="!fmWorkspaceInfo" class="fm-empty">请先设置工作目录</div>
+                <el-tree v-else :data="fmTreeData" :props="{ children: 'children', label: 'name' }" node-key="path" default-expand-all :expand-on-click-node="false">
+                  <template #default="{ data }">
+                    <span class="fm-tree-row">
+                      <span>{{ data.type === 'dir' ? '📁' : fmFileIcon(data.name) }}</span>
+                      <span class="fm-tree-nm">{{ data.name }}</span>
+                      <span v-if="data.type === 'file' && data.size" class="fm-tree-sz">{{ fmFmtSize(data.size) }}</span>
+                    </span>
+                  </template>
+                </el-tree>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ 普通聊天内容区 ══ -->
+      <div v-else class="chat-content" ref="chatContentRef">
         <div 
           v-for="message in messages" 
           :key="message.id"
@@ -354,7 +457,8 @@
           <span>AI 正在思考...</span>
         </div>
       </div>
-      
+      <!-- v-else 结束 -->
+
       <!-- 模式选择区域 -->
       <div class="mode-selector">
         <span class="mode-label">模式选择：</span>
@@ -389,12 +493,19 @@
           >
             推荐模式
           </button>
-          <button 
-            class="mode-btn" 
-            :class="{ active: selectedMode === 'agent' }" 
+          <button
+            class="mode-btn"
+            :class="{ active: selectedMode === 'agent' }"
             @click="selectedMode = 'agent'"
           >
             Agent模式
+          </button>
+          <button
+            class="mode-btn"
+            :class="{ active: selectedMode === 'files' }"
+            @click="selectedMode = 'files'"
+          >
+            🗂️ 文件管理
           </button>
         </div>
       </div>
@@ -402,12 +513,12 @@
       <!-- 输入框区域 -->
       <div class="chat-input-area">
         <div class="input-container">
-          <input 
-            type="text" 
+          <input
+            type="text"
             v-model="inputMessage"
             class="chat-input"
-            placeholder="输入消息..."
-            @keyup.enter="sendMessage"
+            :placeholder="selectedMode === 'files' ? '输入文件管理命令，如：找到所有区块链相关文件' : '输入消息...'"
+            @keyup.enter="selectedMode === 'files' ? fmExecute() : sendMessage()"
           />
           <input 
             type="file" 
@@ -431,7 +542,9 @@
             📎
           </button>
         </div>
-        <button class="send-btn" @click="sendMessage">发送</button>
+        <button class="send-btn" @click="selectedMode === 'files' ? fmExecute() : sendMessage()">
+          {{ selectedMode === 'files' ? '执行' : '发送' }}
+        </button>
       </div>
       <div v-if="speechInterimTranscript || speechErrorMessage" class="speech-status" :class="{ error: speechErrorMessage }">
         <span v-if="speechInterimTranscript">正在识别：{{ speechInterimTranscript }}</span>
@@ -452,6 +565,8 @@
 import { ref, onMounted, watch, nextTick } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { ip } from '@/config/config'
+import { executeCommand, confirmOperation, getFileTree, validateWorkspace, fetchTIS, resumeOrganize } from '@/api/fileManager'
+import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 
@@ -993,9 +1108,269 @@ onMounted(() => {
     fetchSessions()
   }
 })
+
+// ═══════════════════════════════════════════
+// 文件管理模式
+// ═══════════════════════════════════════════
+const fmWorkspace = ref('D:/file_helper_demo')
+const fmWorkspaceInfo = ref(null)
+const fmRunning = ref(false)
+const fmChain = ref([])
+const fmChainRef = ref(null)
+const fmFiles = ref([])
+const fmPending = ref(null)
+const fmTreeData = ref([])
+
+// TIS 相关
+const fmTisDialog = ref(null)   // { message, operation_id }
+const fmTisUsername = ref('')
+const fmTisPassword = ref('')
+const fmTisFetching = ref(false)
+const fmTisLogs = ref([])
+const fmTisLogRef = ref(null)
+
+async function fmSetWorkspace() {
+  if (!fmWorkspace.value.trim()) return
+  try {
+    const res = await validateWorkspace(fmWorkspace.value.trim())
+    fmWorkspaceInfo.value = res.data
+    ElMessage.success(`已设置工作目录：${res.data.name}`)
+    await fmRefreshTree()
+  } catch (e) {
+    ElMessage.error('目录不存在或无法访问')
+  }
+}
+
+async function fmRefreshTree() {
+  if (!fmWorkspace.value) return
+  try {
+    const res = await getFileTree(fmWorkspace.value, 3)
+    fmTreeData.value = res.data?.children || []
+  } catch (_) {}
+}
+
+async function fmExecute() {
+  const cmd = inputMessage.value.trim()
+  if (!cmd || !fmWorkspace.value || fmRunning.value) return
+  inputMessage.value = ''
+  fmRunning.value = true
+  fmChain.value = []
+  fmFiles.value = []
+  fmPending.value = null
+
+  try {
+    await executeCommand(cmd, fmWorkspace.value, fmHandleStep)
+  } catch (e) {
+    ElMessage.error('执行失败：' + e.message)
+  } finally {
+    fmRunning.value = false
+    await fmRefreshTree()
+  }
+}
+
+function fmHandleStep(step) {
+  const t = step.type
+  if (t === 'thought' || t === 'action' || t === 'observation' || t === 'done' || t === 'error') {
+    fmChain.value.push(step)
+    nextTick(() => {
+      if (fmChainRef.value) fmChainRef.value.scrollTop = fmChainRef.value.scrollHeight
+    })
+    // 从 observation 结果里提取文件列表（search_files 的结果）
+    if (t === 'observation' && step.result?.files?.length) {
+      const rawFiles = step.result.files
+      if (typeof rawFiles[0] === 'string') {
+        fmFiles.value = rawFiles.map(p => ({
+          name: p.replace(/\\/g, '/').split('/').pop(),
+          path: p
+        }))
+      }
+    }
+    if (t === 'done' && step.files?.length) fmFiles.value = step.files
+    if (t === 'error') ElMessage.error(step.message)
+  } else if (t === 'tis_required') {
+    fmTisDialog.value = { message: step.message, operation_id: step.operation_id }
+    fmTisLogs.value = []
+    fmTisFetching.value = false
+    fmChain.value.push({ type: 'observation', result: { message: `需要课程数据：弹窗已显示，等待 TIS 登录` } })
+    nextTick(() => { if (fmChainRef.value) fmChainRef.value.scrollTop = fmChainRef.value.scrollHeight })
+  } else if (t === 'confirm_required') {
+    fmPending.value = { operation_id: step.operation_id, action: step.action, files: step.files }
+    fmChain.value.push({ type: 'observation', result: { message: `需要确认：${step.action === 'delete' ? '删除' : '移动'} ${step.files.length} 个文件` } })
+    nextTick(() => {
+      if (fmChainRef.value) fmChainRef.value.scrollTop = fmChainRef.value.scrollHeight
+    })
+  }
+}
+
+async function fmConfirm(confirmed) {
+  if (!fmPending.value) return
+  const { operation_id, action } = fmPending.value
+  fmPending.value = null
+  fmFiles.value = []
+  try {
+    const res = await confirmOperation(operation_id, confirmed)
+    if (confirmed) {
+      const d = res.data
+      let msg = `成功 ${d.success_count} 个`
+      if (d.skipped_count) msg += `，跳过 ${d.skipped_count} 个`
+      if (d.failed_count) msg += `，失败 ${d.failed_count} 个`
+      ElMessage.success(msg)
+      fmChain.value.push({ type: 'done', summary: '操作完成：' + msg })
+    } else {
+      ElMessage.info('已取消')
+      fmChain.value.push({ type: 'done', summary: '用户取消了操作' })
+    }
+    await fmRefreshTree()
+  } catch (e) {
+    ElMessage.error('操作失败：' + e.message)
+  }
+}
+
+function fmStepIcon(type) {
+  return { thought: '💭', action: '🔧', observation: '✅', done: '🏁', error: '⚠️' }[type] || '·'
+}
+
+function fmFormatArgs(args) {
+  if (!args) return ''
+  const entries = Object.entries(args).filter(([k]) => k !== 'file_paths').map(([k, v]) => {
+    if (Array.isArray(v)) return `${k}=[${v.slice(0,3).join(',')}${v.length>3?'...':''}]`
+    return `${k}=${v}`
+  })
+  const fp = args.file_paths ? ` files=${args.file_paths.length}` : ''
+  const s = entries.join(', ') + fp
+  return s ? ` (${s})` : ''
+}
+
+function fmFormatObs(r) {
+  if (!r) return ''
+  return r.message || (r.count !== undefined ? `找到 ${r.count} 个文件` : (r.success_count !== undefined ? `完成：成功 ${r.success_count}` : JSON.stringify(r).slice(0, 60)))
+}
+
+function fmFileIcon(name) {
+  if (!name) return '📄'
+  const ext = (name.split('.').pop() || '').toLowerCase()
+  return ({ pdf:'📕', doc:'📘', docx:'📘', ppt:'📙', pptx:'📙', xls:'📗', xlsx:'📗', jpg:'🖼', jpeg:'🖼', png:'🖼', mp4:'🎬', zip:'📦', py:'🐍', js:'📜' })[ext] || '📄'
+}
+
+function fmFmtSize(b) {
+  if (b < 1024) return b + 'B'
+  if (b < 1048576) return (b/1024).toFixed(1) + 'KB'
+  return (b/1048576).toFixed(1) + 'MB'
+}
+
+async function fmStartTIS() {
+  if (!fmTisUsername.value || !fmTisPassword.value) {
+    ElMessage.warning('请输入学号和密码')
+    return
+  }
+  fmTisFetching.value = true
+  fmTisLogs.value = []
+  const opId = fmTisDialog.value.operation_id
+
+  try {
+    await fetchTIS(fmTisUsername.value, fmTisPassword.value, opId, (step) => {
+      if (step.type === 'log') {
+        // 追加到 TIS 日志（弹窗内）和思维链
+        fmTisLogs.value.push(step.message)
+        fmChain.value.push({ type: 'thought', content: step.message })
+        nextTick(() => {
+          if (fmTisLogRef.value) fmTisLogRef.value.scrollTop = fmTisLogRef.value.scrollHeight
+          if (fmChainRef.value) fmChainRef.value.scrollTop = fmChainRef.value.scrollHeight
+        })
+      } else if (step.type === 'tis_done') {
+        ElMessage.success(`课程数据获取成功，共 ${step.course_count} 门课程`)
+        fmChain.value.push({ type: 'observation', result: { message: `TIS 获取完成，共 ${step.course_count} 门课程，开始整理文件...` } })
+      } else if (step.type === 'error') {
+        ElMessage.error(step.message)
+        fmChain.value.push({ type: 'error', message: step.message })
+      }
+    })
+
+    // TIS 完成，继续课程整理
+    fmTisDialog.value = null
+    const res = await resumeOrganize(opId)
+    const d = res.data
+    const msg = `课程整理完成：成功 ${d.success_count} 个，失败 ${d.failed_count} 个`
+    ElMessage.success(msg)
+    fmChain.value.push({ type: 'done', summary: msg })
+    await fmRefreshTree()
+  } catch (e) {
+    ElMessage.error('TIS 获取失败：' + e.message)
+    fmTisDialog.value = null
+  } finally {
+    fmTisFetching.value = false
+    fmTisUsername.value = ''
+    fmTisPassword.value = ''
+  }
+}
+
+function fmCancelTIS() {
+  fmTisDialog.value = null
+  fmChain.value.push({ type: 'done', summary: '用户取消了 TIS 获取，整理操作已终止' })
+}
 </script>
 
 <style scoped>
+/* ═══ 文件管理模式样式 ═══ */
+.fm-body { display:flex; flex-direction:column; flex:1; overflow:hidden; background:#ecf0f3; position:relative; }
+.fm-topbar { display:flex; align-items:center; gap:8px; padding:8px 16px; background:#fff; border-bottom:1px solid #dde1e7; flex-shrink:0; }
+.fm-label { font-size:13px; color:#888; }
+.fm-dir-input { flex:1; height:34px; padding:0 12px; border:none; border-radius:8px; background:#ecf0f3; box-shadow:inset 2px 2px 4px #d1d9e6,inset -2px -2px 4px #f9f9f9; font-size:13px; outline:none; }
+.fm-set-btn { padding:5px 14px; border:none; border-radius:8px; background:#4B70E2; color:#fff; font-size:13px; cursor:pointer; }
+.fm-workspace-meta { font-size:12px; color:#4B70E2; white-space:nowrap; }
+.fm-panels { display:flex; flex:1; gap:12px; padding:12px; overflow:hidden; }
+.fm-left-col { display:flex; flex-direction:column; gap:10px; flex:0 0 55%; min-width:0; overflow:hidden; }
+.fm-right-col { flex:1; min-width:0; display:flex; flex-direction:column; }
+.fm-panel { background:#ecf0f3; border-radius:12px; box-shadow:5px 5px 10px #d1d9e6,-5px -5px 10px #f9f9f9; display:flex; flex-direction:column; overflow:hidden; }
+.fm-panel-hd { padding:8px 12px; font-size:13px; font-weight:600; color:#555; border-bottom:1px solid #dde1e7; display:flex; align-items:center; gap:6px; flex-shrink:0; }
+.fm-panel-warn { box-shadow:5px 5px 10px #f0c0bb,-5px -5px 10px #f9f9f9; }
+.fm-panel-warn .fm-panel-hd { color:#c0392b; }
+.fm-chain-panel { flex:1; min-height:0; }
+.fm-chain-scroll { flex:1; overflow-y:auto; padding:8px 12px; display:flex; flex-direction:column; gap:6px; }
+.fm-step { display:flex; align-items:flex-start; gap:7px; padding:5px 8px; border-radius:7px; font-size:13px; }
+.fm-step-thought { background:rgba(75,112,226,0.06); }
+.fm-step-action  { background:rgba(39,174,96,0.06); }
+.fm-step-observation { background:rgba(0,0,0,0.03); }
+.fm-step-done { background:rgba(75,112,226,0.10); }
+.fm-step-error { background:rgba(231,76,60,0.08); }
+.fm-step-icon { flex-shrink:0; }
+.fm-step-body { color:#444; word-break:break-word; line-height:1.5; }
+.fm-step-args { color:#999; font-size:12px; }
+.fm-files-panel { flex:0 0 auto; max-height:38%; }
+.fm-files-scroll { flex:1; overflow-y:auto; padding:6px 12px; display:flex; flex-direction:column; gap:3px; }
+.fm-file-row { display:flex; align-items:center; gap:7px; padding:4px 7px; border-radius:6px; font-size:13px; color:#444; }
+.fm-file-row:hover { background:rgba(0,0,0,0.04); }
+.fm-file-danger { border-left:3px solid #e74c3c; padding-left:4px; }
+.fm-file-icon { flex-shrink:0; }
+.fm-file-nm { word-break:break-all; }
+.fm-count { color:#4B70E2; font-size:12px; margin-left:4px; }
+.fm-confirm-bar { display:flex; gap:10px; padding:8px 0 2px; border-top:1px solid #dde1e7; margin-top:4px; }
+.fm-btn-danger { padding:7px 18px; border:none; border-radius:8px; background:#e74c3c; color:#fff; font-size:13px; cursor:pointer; }
+.fm-btn-cancel { padding:7px 14px; border:none; border-radius:8px; background:#ecf0f3; color:#555; font-size:13px; cursor:pointer; box-shadow:3px 3px 6px #d1d9e6,-3px -3px 6px #f9f9f9; }
+.fm-tree-panel { flex:1; }
+.fm-tree-scroll { flex:1; overflow-y:auto; padding:6px; }
+.fm-tree-row { display:flex; align-items:center; gap:5px; font-size:13px; }
+.fm-tree-nm { color:#333; }
+.fm-tree-sz { color:#aaa; font-size:11px; margin-left:3px; }
+.fm-empty { color:#b0b6be; font-size:13px; text-align:center; padding:18px 0; }
+.fm-dot { width:7px; height:7px; border-radius:50%; background:#4B70E2; animation:fmpulse 1s infinite; margin-left:4px; }
+.fm-refresh { margin-left:auto; border:none; background:none; cursor:pointer; font-size:15px; color:#888; padding:0 2px; }
+.fm-refresh:hover { color:#4B70E2; }
+@keyframes fmpulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+.fm-tis-overlay { position:absolute; inset:0; background:rgba(0,0,0,0.35); display:flex; align-items:center; justify-content:center; z-index:100; }
+.fm-tis-dialog { background:#ecf0f3; border-radius:14px; box-shadow:8px 8px 20px #c8d0dc,-8px -8px 20px #ffffff; padding:24px; width:420px; max-width:90%; }
+.fm-tis-title { font-size:16px; font-weight:700; color:#333; margin-bottom:10px; }
+.fm-tis-desc { font-size:13px; color:#666; margin-bottom:16px; line-height:1.6; }
+.fm-tis-fields { display:flex; flex-direction:column; gap:10px; margin-bottom:16px; }
+.fm-tis-actions { display:flex; gap:10px; }
+.fm-btn-primary { padding:8px 20px; border:none; border-radius:8px; background:#4B70E2; color:#fff; font-size:14px; cursor:pointer; }
+.fm-tis-log { background:#1e1e2e; border-radius:8px; padding:10px 12px; height:200px; overflow-y:auto; }
+.fm-tis-line { font-size:12px; color:#a6e3a1; font-family:monospace; line-height:1.6; }
+:deep(.el-tree) { background:transparent; }
+:deep(.el-tree-node__content) { height:26px; border-radius:5px; }
+:deep(.el-tree-node__content:hover) { background:rgba(75,112,226,0.08); }
+
+/* ═══ 原有样式 ═══ */
 .chat-container {
   display: flex;
   height: calc(100vh - 50px);

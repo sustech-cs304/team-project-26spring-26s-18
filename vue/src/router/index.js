@@ -27,6 +27,11 @@ const routes = [
     component: () => import('@/views/User.vue'),
   },
   {
+    path: '/files',
+    name: 'files',
+    component: () => import('@/views/FileManager.vue'),
+  },
+  {
     path: '/',
     redirect: '/chat',
   },
