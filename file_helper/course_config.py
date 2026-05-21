@@ -336,6 +336,114 @@ def _call_bailian_ai(filename: str, content_hint: str = "") -> Optional[dict]:
         return None
 
 
+def batch_classify_courses(files: list, batch_size: int = 30) -> dict:
+    """
+    批量分类文件所属课程，一次 API 调用处理多个文件。
+
+    Args:
+        files: 文件路径列表
+        batch_size: 每批文件数量（默认30，避免超出 token 限制）
+
+    Returns:
+        {filepath: {"course_code": "CS307", "course_name": "数据库原理"}} 或 "OTHER"
+    """
+    try:
+        from .config import BAILIAN_API_KEY
+    except ImportError:
+        return {}
+
+    if not BAILIAN_API_KEY:
+        return {}
+
+    courses = load_courses()
+    course_lines = []
+    for c in courses:
+        kw = ", ".join(c.get("keywords", [])) if c.get("keywords") else ""
+        line = f"{c['code']} - {c['name']}"
+        if kw:
+            line += f" ({kw})"
+        course_lines.append(line)
+    course_list = "\n".join(course_lines)
+
+    import urllib.request
+    results = {}
+
+    # 分批处理
+    for i in range(0, len(files), batch_size):
+        batch = files[i:i + batch_size]
+
+        # 构造文件列表，附带内容片段
+        file_lines = []
+        for idx, f in enumerate(batch, 1):
+            path = Path(f)
+            hint = _read_file_content(path, max_chars=200)
+            hint_str = hint.replace("\n", " ")[:200] if hint else "无"
+            file_lines.append(f"{idx}. {path.name} | {hint_str}")
+
+        files_text = "\n".join(file_lines)
+
+        prompt = f"""以下是 {len(batch)} 个文件，请将每个文件分类到对应课程。
+
+文件列表（编号. 文件名 | 内容片段）：
+{files_text}
+
+课程列表：
+{course_list}
+
+请返回 JSON 数组，每个元素对应一个文件（按编号顺序）：
+[
+  {{"idx": 1, "course_code": "课程代码", "course_name": "课程名称"}},
+  ...
+]
+无法判断的填：{{"idx": N, "course_code": "Unknown", "course_name": "Unknown"}}
+只返回 JSON 数组，不要其他文字。"""
+
+        payload = {
+            "model": "qwen-plus",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+        }
+
+        try:
+            req = urllib.request.Request(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {BAILIAN_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                raw = json.loads(resp.read().decode("utf-8"))
+                content = raw["choices"][0]["message"]["content"].strip()
+
+            # 提取 JSON 数组
+            match = re.search(r'\[.*\]', content, re.DOTALL)
+            if not match:
+                continue
+            parsed = json.loads(match.group(0))
+
+            for item in parsed:
+                idx = item.get("idx", 0) - 1
+                if 0 <= idx < len(batch):
+                    code = item.get("course_code", "Unknown")
+                    name = item.get("course_name", "Unknown")
+                    if code and code != "Unknown":
+                        results[batch[idx]] = {"course_code": code, "course_name": name}
+                    else:
+                        results[batch[idx]] = "OTHER"
+
+        except Exception as e:
+            print(f"  [批量分类] 第 {i//batch_size + 1} 批失败: {e}")
+            # 该批次标记为 OTHER
+            for f in batch:
+                if f not in results:
+                    results[f] = "OTHER"
+
+    return results
+
+
 def _read_file_content(filepath: Path, max_chars: int = 500) -> str:
     """
     读取文件内容用于辅助课程识别。

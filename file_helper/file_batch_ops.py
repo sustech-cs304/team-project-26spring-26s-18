@@ -956,19 +956,30 @@ def organize_by_course(files: List[str], base_dir: str,
     course_map, other_files = {}, []
     total = len(files)
 
-    print(f"\n开始识别 {total} 个文件的所属学科...")
+    print(f"\n开始识别 {total} 个文件的所属学科（批量模式）...")
     print("-" * 50)
+
+    if use_ai and files:
+        from .course_config import batch_classify_courses
+        print(f"  正在调用 AI 批量分类，请稍候...", flush=True)
+        batch_results = batch_classify_courses(files)
+        print(f"  AI 分类完成，共处理 {len(batch_results)} 个文件")
+        print("-" * 50)
+    else:
+        batch_results = {}
+
     for idx, f in enumerate(files, 1):
         fname = Path(f).name
-        print(f"  [{idx}/{total}] {fname} ... ", end="", flush=True)
-        code, name, conf = identify_course_for_file(f, use_ai=use_ai)
-        if code != "OTHER":
+        cls = batch_results.get(f)
+        if cls and cls != "OTHER":
+            code = cls["course_code"]
+            name = cls["course_name"]
             folder = get_folder_name(code, name)
             course_map.setdefault(folder, []).append(f"{f} → {folder}/")
-            print(f"→ {name}")
+            print(f"  [{idx}/{total}] {fname} → {name}")
         else:
             other_files.append(f"{f} → 其它/")
-            print("→ 其他（无法识别）")
+            print(f"  [{idx}/{total}] {fname} → 其他（无法识别）")
 
     # ===== 预览模式 =====
     if preview:
