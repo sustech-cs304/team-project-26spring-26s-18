@@ -174,7 +174,7 @@ team-project-26spring-26s-18/
 
 ## 📚 相关文档
 
-- [架构设计文档](design-26s-18.md)
+- [架构设计文档](文档/design-26s-18.md)
 - [后端部署指南](python_demo/Readme.md)
 - [前端部署指南](vue/README.md)
 
