@@ -98,14 +98,27 @@ def extract_backend(artifact_path):
         with tarfile.open(artifact_path, 'r:gz') as tar_ref:
             tar_ref.extractall(DEPLOY_DIR)
 
-    # 找到实际代码目录
+    # 找到实际代码目录（python_demo）
     actual_dir = find_code_dir()
-    print(f"  解压到: {actual_dir}")
+    print(f"  解压完成，包含:")
+    for item in DEPLOY_DIR.iterdir():
+        if item.is_dir():
+            print(f"    - {item.name}/")
+    print(f"  主代码目录: {actual_dir}")
     return actual_dir
 
 
 def find_code_dir():
     """找到包含 main.py 的代码目录"""
+    # 直接在部署目录下查找 python_demo
+    python_demo_dir = DEPLOY_DIR / "python_demo"
+    if python_demo_dir.exists():
+        for pattern in ["main.py", "app.py"]:
+            if (python_demo_dir / pattern).exists():
+                return python_demo_dir
+        return python_demo_dir
+
+    # 备用：递归查找
     for pattern in ["main.py", "app.py"]:
         if (DEPLOY_DIR / pattern).exists():
             return DEPLOY_DIR

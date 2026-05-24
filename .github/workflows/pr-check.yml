@@ -82,7 +82,8 @@ jobs:
             --exclude='__pycache__' \
             --exclude='.pytest_cache' \
             --exclude='*.pyc' \
-            -czf "$RUNNER_TEMP/backend-runtime.tar.gz" .
+            -czf "$RUNNER_TEMP/backend-runtime.tar.gz" python_demo file_helper
+        working-directory: ..
 
       - name: Upload backend artifact
         uses: actions/upload-artifact@v4
