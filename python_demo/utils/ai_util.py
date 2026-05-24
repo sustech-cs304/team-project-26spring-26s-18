@@ -3,6 +3,7 @@ import os
 import base64
 import uuid
 import time
+import json
 from utils.oss_util import OSSUtil
 from crud.session import create_content, get_last_n_content_by_session_id
 import asyncio
@@ -525,13 +526,58 @@ async def ai_chat_stream_less_history_more_rag(
     print(f"[ai_chat_stream] AI回复已存储，长度: {len(full_reply)}")
 
 # 推荐模式专用流式接口：正常长度回复 + 与资源卡片统一的检索上下文
+def _recommendation_has_content(data):
+    if not isinstance(data, dict):
+        return False
+
+    course_resources = data.get("course_resources") or {}
+    return bool(
+        data.get("should_show_recommendation") or
+        data.get("lecture") or
+        data.get("exercise") or
+        data.get("reference") or
+        data.get("other") or
+        data.get("web") or
+        data.get("session_links") or
+        data.get("has_course_resources") or
+        course_resources.get("mooc") or
+        course_resources.get("github") or
+        course_resources.get("tutorials") or
+        course_resources.get("books") or
+        course_resources.get("practice")
+    )
+
+
+def _normalize_recommendation_data(data):
+    if not isinstance(data, dict):
+        return None
+
+    normalized = dict(data)
+    normalized["mode"] = "recommend"
+    normalized["lecture"] = normalized.get("lecture") or []
+    normalized["exercise"] = normalized.get("exercise") or []
+    normalized["reference"] = normalized.get("reference") or []
+    normalized["other"] = normalized.get("other") or []
+    normalized["web"] = normalized.get("web") or []
+    normalized["session_links"] = normalized.get("session_links") or []
+    normalized["course_resources"] = normalized.get("course_resources") or {}
+    normalized["all"] = normalized.get("all") or (
+        normalized["lecture"] +
+        normalized["exercise"] +
+        normalized["reference"] +
+        normalized["other"]
+    )
+    return normalized
+
+
 async def ai_chat_stream_recommend(
     db,
     session_id: int,
     content: str,
     files=None,
     file_types=None,
-    file_names=None
+    file_names=None,
+    recommendation_data=None
 ):
     """
     推荐模式专用AI对话接口（流式）。
@@ -604,7 +650,10 @@ async def ai_chat_stream_recommend(
     t6 = time.time()
     from utils.recommend_resources_util import resolve_recommend_context, build_recommend_prompt_messages
 
-    recommend_ctx = await resolve_recommend_context(content)
+    recommend_ctx = _normalize_recommendation_data(recommendation_data)
+    if recommend_ctx is None:
+        recommend_ctx = await resolve_recommend_context(content)
+        recommend_ctx = _normalize_recommendation_data(recommend_ctx) or {}
     recommend_msgs = build_recommend_prompt_messages(recommend_ctx)
     t7 = time.time()
     print(
@@ -621,6 +670,15 @@ async def ai_chat_stream_recommend(
 
     t8 = time.time()
     print(f"[ai_chat_stream_recommend] step7: 拼装messages耗时: {t8-t7:.2f}s")
+    if _recommendation_has_content(recommend_ctx):
+        await create_content(
+            db,
+            session_id,
+            "assistant",
+            json.dumps(recommend_ctx, ensure_ascii=False),
+            content_type="recommendation"
+        )
+
     # 5. 调用大模型（流式）
     t9 = time.time()
     print(f"[ai_chat_stream_recommend] step8: 开始调用大模型, t={t9}")
@@ -645,10 +703,6 @@ async def ai_chat_stream_recommend(
     ai_msg = await create_content(db, session_id, "assistant", full_reply, content_type="text")
     print(f"[ai_chat_stream_recommend] AI回复已存储，长度: {len(full_reply)}")
 
-
-import json
-import asyncio
-from functools import partial
 
 # 定义 Agent 可调用的工具列表（对应已有的专业模式）
 AGENT_TOOLS = [

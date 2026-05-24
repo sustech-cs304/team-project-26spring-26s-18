@@ -1,9 +1,10 @@
 import time
 print(f"[启动分析] routers/session.py 开始导入 {time.time()}")
+import json
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy import select, delete
 from sqlalchemy.orm import Session as DBSession
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from schemas.session import Session as SessionSchema, SessionContent as SessionContentSchema
 from utils.Result import Result
 from schemas.session import Session as SessionSchema, SessionContent as SessionContentSchema
@@ -25,6 +26,25 @@ from utils.recommend_resources_util import extract_session_links, resolve_recomm
 
 router = APIRouter(prefix="/session", tags=["session"])
 
+def _parse_json_object(raw: str | None) -> Dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+def _serialize_session_content(obj: SessionContent) -> Dict[str, Any]:
+    item = SessionContentSchema.model_validate(obj).model_dump(mode="json")
+    if item.get("content_type") == "recommendation":
+        payload = _parse_json_object(item.get("content"))
+        if payload:
+            item["mode"] = payload.get("mode", "recommend")
+            item["extra"] = {"recommendations": payload}
+            item.update(payload)
+    return item
+
 @router.get("/user/{user_id}")
 async def api_get_sessions_by_user_id(user_id: int, db: DBSession = Depends(get_db)):
     data = await get_sessions_by_user_id(db, user_id)
@@ -34,7 +54,7 @@ async def api_get_sessions_by_user_id(user_id: int, db: DBSession = Depends(get_
 @router.get("/{session_id}/content")
 async def api_get_content_by_session_id(session_id: int, db: DBSession = Depends(get_db)):
     data = await get_content_by_session_id(db, session_id)
-    data = [SessionContentSchema.model_validate(obj) for obj in data]
+    data = [_serialize_session_content(obj) for obj in data]
     return Result.success(data)
 
 @router.post("/create")
@@ -150,6 +170,7 @@ async def api_create_ai_content_stream_recommend(
     files: Optional[List[str]] = Body(None, embed=True),
     file_types: Optional[List[str]] = Body(None, embed=True),
     file_names: Optional[List[str]] = Body(None, embed=True),
+    recommendation_data: Optional[Dict[str, Any]] = Body(None, embed=True),
     db: DBSession = Depends(get_db)
 ):
     async def event_generator():
@@ -160,7 +181,8 @@ async def api_create_ai_content_stream_recommend(
             content=content,
             files=files,
             file_types=file_types,
-            file_names=file_names
+            file_names=file_names,
+            recommendation_data=recommendation_data
         ):
             yield chunk
     return StreamingResponse(event_generator(), media_type="text/plain")
@@ -230,11 +252,13 @@ async def api_recommend_resources(
         "exercise": ctx.get("exercise", []),
         "reference": ctx.get("reference", []),
         "other": ctx.get("other", []),
+        "all": ctx.get("all", []),
         "web": ctx.get("web", []),
         "has_local": ctx.get("has_local", False),
         "has_web": ctx.get("has_web", False),
         "cot_reason": ctx.get("cot_reason", ""),
         "search_plan": ctx.get("search_plan"),
+        "mode": "recommend",
         "session_links": session_links,
     })
 

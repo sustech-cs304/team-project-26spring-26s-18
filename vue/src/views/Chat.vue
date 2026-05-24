@@ -629,6 +629,51 @@ function renderMarkdown(mdText) {
   return marked.parse(mdText)
 }
 
+function parseRecommendationPayload(message) {
+  const fromExtra = message?.extra?.recommendations
+  if (fromExtra && typeof fromExtra === 'object' && !Array.isArray(fromExtra)) {
+    return fromExtra
+  }
+
+  if (typeof message?.content !== 'string' || !message.content.trim()) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(message.content)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch (_) {
+    return null
+  }
+}
+
+function normalizeMessage(message) {
+  if (message?.content_type !== 'recommendation') {
+    return message
+  }
+
+  const payload = parseRecommendationPayload(message)
+  if (!payload) {
+    return message
+  }
+
+  return {
+    ...message,
+    mode: message.mode || payload.mode || 'recommend',
+    query_used: message.query_used || payload.query_used,
+    lecture: message.lecture || payload.lecture || [],
+    exercise: message.exercise || payload.exercise || [],
+    reference: message.reference || payload.reference || [],
+    other: message.other || payload.other || [],
+    course_resources: message.course_resources || payload.course_resources || {},
+    has_course_resources: message.has_course_resources || payload.has_course_resources || false,
+    course_name: message.course_name || payload.course_name,
+    web: message.web || payload.web || [],
+    session_links: message.session_links || payload.session_links || [],
+    extra: message.extra || { recommendations: payload }
+  }
+}
+
 function isSchedulerOnlySession(session) {
   return String(session?.title || '').trim() === '日程优化方案'
 }
@@ -709,7 +754,7 @@ async function fetchSessionContent(sessionId) {
     if (response.ok) {
       const result = await response.json()
       console.log('获取会话内容返回：', result)
-      messages.value = result.data
+      messages.value = result.data.map(normalizeMessage)
       scrollToBottom()
     }
   } catch (error) {
@@ -855,7 +900,10 @@ async function sendMessage() {
       // 推荐模式：先获取资源卡片，再请求AI回复
       if (selectedMode.value === 'recommend') {
         console.log('推荐模式：先获取相关资源...')
-        await fetchRecommendResources(messageContent)
+        const recommendationData = await fetchRecommendResources(messageContent)
+        if (recommendationData) {
+          requestData.recommendation_data = recommendationData
+        }
       }
 
       // 添加一个空的AI消息占位符，用于实时更新内容
@@ -1004,9 +1052,10 @@ async function fetchRecommendResources(queryText = '') {
     }
 
     // 将推荐结果作为一条AI消息添加到对话中
-    const recommendationMessage = {
+    const recommendationMessage = normalizeMessage({
       id: Date.now(),
       role: 'assistant',
+      content: '',
       content_type: 'recommendation',
       query_used: json.data.query_used,
       // 知识库分类数据
@@ -1022,7 +1071,7 @@ async function fetchRecommendResources(queryText = '') {
       web: json.data.web || [],
       session_links: json.data.session_links || [],
       created_at: new Date().toISOString()
-    }
+    })
 
     // 检查是否已存在相同的推荐消息（避免重复）
     const existingIndex = messages.value.findIndex(
