@@ -146,13 +146,9 @@ def check_environment():
 
 
 def install_dependencies(code_dir):
-    """安装依赖"""
+    """安装依赖（优先使用 environment.yml）"""
+    env_file = code_dir / "environment.yml"
     req_file = code_dir / "requirements.txt"
-    if not req_file.exists():
-        print(f"\n警告: 未找到 requirements.txt")
-        return False
-
-    print(f"\n安装依赖: {req_file}")
 
     # 检查是否使用 conda
     use_conda = False
@@ -166,30 +162,52 @@ def install_dependencies(code_dir):
         pass
 
     if use_conda:
-        env_name = input("  输入 conda 环境名称 (默认: fastapi_env): ").strip() or "fastapi_env"
+        env_name = input("  输入 conda 环境名称 (默认: fastApi_env): ").strip() or "fastApi_env"
 
         # 检查环境是否存在
         result = subprocess.run(["conda", "env", "list"], capture_output=True, text=True)
         if env_name in result.stdout:
-            print(f"  环境 {env_name} 已存在，将激活并更新依赖")
+            print(f"  环境 {env_name} 已存在")
+            if env_file.exists():
+                print(f"  使用 environment.yml 更新环境...")
+                subprocess.run([
+                    "conda", "env", "update", "-n", env_name, "--file", str(env_file), "--prune"
+                ], check=True)
+            elif req_file.exists():
+                print(f"  使用 requirements.txt 更新依赖...")
+                subprocess.run([
+                    "conda", "run", "-n", env_name, "pip", "install", "-r", str(req_file)
+                ], check=True)
         else:
-            print(f"  创建新环境: {env_name}")
-            subprocess.run([
-                "conda", "create", "-n", env_name, "python=3.11", "-y"
-            ], check=True)
-
-        # 安装依赖
-        print(f"  安装依赖到 {env_name}...")
-        subprocess.run([
-            "conda", "run", "-n", env_name, "pip", "install", "-r", str(req_file)
-        ], check=True)
+            if env_file.exists():
+                print(f"  使用 environment.yml 创建环境: {env_name}")
+                subprocess.run([
+                    "conda", "env", "create", "-n", env_name, "--file", str(env_file)
+                ], check=True)
+            elif req_file.exists():
+                print(f"  创建新环境: {env_name}")
+                subprocess.run([
+                    "conda", "create", "-n", env_name, "python=3.11", "-y"
+                ], check=True)
+                print(f"  安装依赖到 {env_name}...")
+                subprocess.run([
+                    "conda", "run", "-n", env_name, "pip", "install", "-r", str(req_file)
+                ], check=True)
+            else:
+                print("  警告: 未找到 environment.yml 或 requirements.txt")
+                return None
 
         return env_name
     else:
-        subprocess.run([
-            sys.executable, "-m", "pip", "install", "-r", str(req_file)
-        ], check=True)
-        return None
+        if req_file.exists():
+            print(f"\n安装依赖: {req_file}")
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", "-r", str(req_file)
+            ], check=True)
+            return None
+        else:
+            print("\n警告: 未找到 requirements.txt")
+            return None
 
 
 def start_backend(code_dir, conda_env=None):
