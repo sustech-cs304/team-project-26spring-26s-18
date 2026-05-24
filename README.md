@@ -116,9 +116,65 @@ uvicorn main:app --reload
 
 ---
 
+## 🔧 一键部署（推荐）
+
+使用 GitHub Actions 生成的产物进行快速部署：
+
+### 步骤 1: 下载部署文件
+
+1. 访问 GitHub 仓库的 Actions 页面
+2. 选择任意成功运行的 workflow
+3. 在 **Artifacts** 区域下载以下文件：
+   - `frontend-dist.zip` - 前端构建产物
+   - `backend-runtime.zip` - 后端运行时文件
+
+### 步骤 2: 准备部署目录
+
+创建一个新目录，放入以下文件：
+
+```
+deploy/
+├── deploy_backend.py    # 从项目根目录复制
+├── deploy_frontend.py   # 从项目根目录复制
+├── frontend-dist.zip    # 从 GitHub Actions 下载
+└── backend-runtime.zip  # 从 GitHub Actions 下载
+```
+
+### 步骤 3: 设置环境变量
+
+在终端中设置必要的环境变量（Windows）：
+
+```cmd
+set OSS_ACCESS_KEY_ID=your_access_key
+set OSS_ACCESS_KEY_SECRET=your_secret_key
+set DASHSCOPE_API_KEY=your_dashscope_key
+```
+
+### 步骤 4: 启动服务
+
+**终端 1 - 启动前端：**
+```bash
+python deploy_frontend.py
+```
+然后选择选项 1 启动前端服务器
+
+**终端 2 - 启动后端：**
+```bash
+python deploy_backend.py
+```
+按照提示完成依赖安装，然后手动启动服务
+
+### 步骤 5: 访问应用
+
+- **前端**: http://localhost:8080
+- **后端 API**: http://localhost:8000
+- **API 文档**: http://localhost:8000/docs
+
+---
+
 ## 🌐 访问地址
 
-- **前端**: http://localhost:5173
+- **前端**: http://localhost:5173（开发模式）/ http://localhost:8080（部署模式）
 - **后端 API**: http://localhost:8000
 - **API 文档**: http://localhost:8000/docs
 
