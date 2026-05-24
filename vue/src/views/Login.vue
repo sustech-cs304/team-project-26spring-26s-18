@@ -96,10 +96,10 @@ async function onLogin() {
     })
     const data = await res.json()
     if (data.code === 1) {
-      userStore.setUser(data.data)
+      userStore.setUser(data.data || data, { email: loginEmail.value, userName: loginEmail.value })
       console.log(data.data)
       ElMessage.success('登录成功')
-      router.push('/create')
+      router.push('/chat')
     } else {
       ElMessage.error('登录失败：' + data.message)
     }
@@ -170,9 +170,9 @@ async function onRegister() {
     if (data.code === 1) {
       //展示data.data中的用户信息
       console.log(data)
-      userStore.setUser(data.data)
+      userStore.setUser(data.data || data, { email: registerEmail.value, userName: registerEmail.value })
       ElMessage.success('注册成功')
-      router.push('/create')
+      router.push('/chat')
     } else {
       ElMessage.error('注册失败：' + data.message)
     }

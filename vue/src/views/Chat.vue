@@ -466,44 +466,44 @@
           <button 
             class="mode-btn" 
             :class="{ active: selectedMode === 'default' }" 
-            @click="selectedMode = 'default'"
+            @click="selectMode('default')"
           >
-            默认模式
+            💬 默认模式
           </button>
           <button 
             class="mode-btn" 
             :class="{ active: selectedMode === 'campus' }" 
-            @click="selectedMode = 'campus'"
+            @click="selectMode('campus')"
           >
-            校园助手
+            🏫 校园助手
           </button>
           <button 
             class="mode-btn" 
             :class="{ active: selectedMode === 'learning' }" 
-            @click="selectedMode = 'learning'"
+            @click="selectMode('learning')"
           >
-            学习助手
+            📚 学习助手
           </button>
           <button 
             class="mode-btn" 
             type="button"
             title="自动检索知识库与网络资料，在对话中展示相关文件"
             :class="{ active: selectedMode === 'recommend' }" 
-            @click="selectedMode = 'recommend'"
+            @click="selectMode('recommend')"
           >
-            推荐模式
+            ✨ 推荐模式
           </button>
           <button
             class="mode-btn"
             :class="{ active: selectedMode === 'agent' }"
-            @click="selectedMode = 'agent'"
+            @click="selectMode('agent')"
           >
-            Agent模式
+            🤖 Agent模式
           </button>
           <button
             class="mode-btn"
             :class="{ active: selectedMode === 'files' }"
-            @click="selectedMode = 'files'"
+            @click="selectMode('files')"
           >
             🗂️ 文件管理
           </button>
@@ -579,9 +579,24 @@ const loading = ref(false)
 const chatContentRef = ref(null)
 const fileInput = ref(null)
 const selectedFiles = ref([])
-const selectedMode = ref('default') // 默认模式
+const CHAT_MODE_STORAGE_KEY = 'selectedChatMode'
+const DEFAULT_CHAT_MODE = 'default'
+const CHAT_MODE_VALUES = ['default', 'campus', 'learning', 'recommend', 'agent', 'files']
+
+function getSavedChatMode() {
+  const savedMode = localStorage.getItem(CHAT_MODE_STORAGE_KEY)
+  return CHAT_MODE_VALUES.includes(savedMode) ? savedMode : DEFAULT_CHAT_MODE
+}
+
+const selectedMode = ref(getSavedChatMode()) // 默认模式
 const loadingResources = ref(false)
 const committedSpeechTranscript = ref('')
+
+function selectMode(mode) {
+  if (!CHAT_MODE_VALUES.includes(mode)) return
+  selectedMode.value = mode
+  localStorage.setItem(CHAT_MODE_STORAGE_KEY, mode)
+}
 
 // 存储展开了网络资源的 message id
 const webExpandedIds = ref(new Set())
