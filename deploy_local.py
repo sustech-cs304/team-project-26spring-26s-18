@@ -37,7 +37,12 @@ def find_artifacts():
         artifacts["frontend"] = f
         break
 
-    # 查找后端 tar.gz
+    # 查找后端 zip（可能直接是 zip 或包含 tar.gz 的 zip）
+    for f in Path(".").glob("*backend*.zip"):
+        artifacts["backend-zip"] = f
+        break
+
+    # 查找后端 tar.gz（直接下载的情况）
     for f in Path(".").glob("*backend*.tar.gz"):
         artifacts["backend"] = f
         break
@@ -67,15 +72,41 @@ def extract_frontend(zip_path, extract_to):
     return extract_to
 
 
-def extract_backend(tar_path, extract_to):
-    """解压后端产物"""
+def extract_backend_artifact(artifact_path, extract_to):
+    """解压后端产物（支持 zip 或 tar.gz）"""
+    artifact_path = Path(artifact_path)
     extract_to = Path(extract_to)
     if extract_to.exists():
         shutil.rmtree(extract_to)
     extract_to.mkdir(parents=True)
 
-    with tarfile.open(tar_path, 'r:gz') as tar_ref:
-        tar_ref.extractall(extract_to)
+    if artifact_path.suffix == '.zip':
+        # 先解压 zip
+        temp_dir = extract_to.parent / "backend_temp"
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+        temp_dir.mkdir()
+
+        with zipfile.ZipFile(artifact_path, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
+
+        # 从解压目录中找到 tar.gz
+        tar_files = list(temp_dir.glob("**/*.tar.gz"))
+        if tar_files:
+            tar_path = tar_files[0]
+            print(f"  找到 tar.gz: {tar_path.name}")
+            with tarfile.open(tar_path, 'r:gz') as tar_ref:
+                tar_ref.extractall(extract_to)
+        else:
+            # 没有 tar.gz，直接使用解压后的内容
+            for item in temp_dir.iterdir():
+                shutil.move(str(item), extract_to / item.name)
+        shutil.rmtree(temp_dir)
+    else:
+        # 直接是 tar.gz
+        with tarfile.open(artifact_path, 'r:gz') as tar_ref:
+            tar_ref.extractall(extract_to)
+
     print(f"  后端解压到: {extract_to}")
     return extract_to
 
@@ -149,7 +180,7 @@ def main():
         print("\n错误: 未找到 artifacts 文件")
         print("请确保以下文件在当前目录:")
         print("  - frontend-dist.zip")
-        print("  - backend-runtime.tar.gz")
+        print("  - backend-runtime.zip 或 backend-runtime.tar.gz")
         print("\n从 GitHub Actions 下载:")
         print("  仓库 -> Actions -> 选择任一 run -> Artifacts -> 下载")
         sys.exit(1)
@@ -166,7 +197,10 @@ def main():
     # 3. 解压
     print("\n[3/4] 解压 artifacts...")
     frontend_path = extract_frontend(artifacts["frontend"], DEPLOY_DIR / "frontend")
-    backend_path = extract_backend(artifacts["backend"], DEPLOY_DIR / "backend")
+
+    # 处理后端（可能是 zip 或 tar.gz）
+    backend_artifact = artifacts.get("backend") or artifacts.get("backend-zip")
+    backend_path = extract_backend_artifact(backend_artifact, DEPLOY_DIR / "backend")
 
     # 4. 安装依赖
     print("\n[4/4] 安装后端依赖...")
