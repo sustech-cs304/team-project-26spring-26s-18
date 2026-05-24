@@ -263,21 +263,13 @@ def main():
         print(f"  Conda 环境: {conda_env}")
     print("="*50)
 
-    # 询问是否启动
-    print("\n选项:")
-    print("  1. 启动后端服务 (http://127.0.0.1:8000)")
-    print("  2. 显示启动命令")
-    print("  3. 退出")
-    choice = input("\n请选择 (1/2/3): ").strip()
-
-    if choice == "1":
-        start_backend(code_dir, conda_env)
-    elif choice == "2":
-        print("\n启动命令:")
-        if conda_env:
-            print(f"  conda activate {conda_env}")
-        print(f"  cd {code_dir}")
-        print("  uvicorn main:app --reload")
+    print("\n启动方式:")
+    if conda_env:
+        print(f"  1. 激活环境: conda activate {conda_env}")
+    print(f"  2. 进入目录: cd {code_dir}")
+    print("  3. 启动服务: uvicorn main:app --reload")
+    print("  4. 访问地址: http://127.0.0.1:8000")
+    print("  5. API文档: http://127.0.0.1:8000/docs")
 
 
 if __name__ == "__main__":
