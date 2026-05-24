@@ -160,7 +160,7 @@ team-project-26spring-26s-18/
 - **后端层**: FastAPI + MySQL + Redis，提供 API 服务
 - **数据层**: MySQL 存储持久化数据，Redis 缓存临时数据
 
-详细架构设计请参考 [design-26s-18.md](design-26s-18.md)
+详细架构设计请参考 [design-26s-18.md](文档/design-26s-18.md)
 
 ---
 
