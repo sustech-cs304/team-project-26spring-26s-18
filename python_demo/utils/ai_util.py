@@ -689,6 +689,23 @@ AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "use_recommend_assistant",
+            "description": "当用户请求学习资源推荐、课程推荐、教程推荐、MOOC推荐、学习材料推荐等与资源推荐相关的问题时调用此工具。它会整合本地知识库和网络搜索结果进行智能推荐。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_question": {
+                        "type": "string",
+                        "description": "用户提出的原始问题，将原样传递给推荐助手处理"
+                    }
+                },
+                "required": ["user_question"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "direct_answer",
             "description": "当用户问题比较简单、属于打招呼、常识问答、或者无需调用专业助手即可回答时使用。例如：你好、今天天气、简单计算等。",
             "parameters": {
@@ -730,6 +747,7 @@ async def agent_chat_stream(
         "你是一个智能调度助手。根据用户的问题，判断应该调用哪个专业工具：\n"
         "- use_campus_assistant: 校园生活、政策、设施、校历、选课、宿舍、食堂等\n"
         "- use_learning_assistant: 学习、作业、笔记、文献、课程内容、知识点讲解等\n"
+        "- use_recommend_assistant: 学习资源推荐、课程推荐、教程推荐、MOOC推荐、学习材料推荐等\n"
         "- direct_answer: 简单问候、常识问答、无需专业检索的问题\n"
         "请选择最合适的工具并填写参数，若总结pdf、md文档，则一定调用use_learning_assistant"
     )
@@ -807,6 +825,18 @@ async def agent_chat_stream(
     elif tool_name == "use_learning_assistant":
         sub_content = tool_args.get("user_question", content)
         async for chunk in ai_chat_stream_more_history_no_rag(
+            db=db,
+            session_id=session_id,
+            content=sub_content,
+            files=files,
+            file_types=file_types,
+            file_names=file_names
+        ):
+            yield chunk
+
+    elif tool_name == "use_recommend_assistant":
+        sub_content = tool_args.get("user_question", content)
+        async for chunk in ai_chat_stream_recommend(
             db=db,
             session_id=session_id,
             content=sub_content,
