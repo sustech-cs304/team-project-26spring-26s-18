@@ -466,44 +466,44 @@
           <button 
             class="mode-btn" 
             :class="{ active: selectedMode === 'default' }" 
-            @click="selectedMode = 'default'"
+            @click="selectMode('default')"
           >
-            默认模式
+            💬 默认模式
           </button>
           <button 
             class="mode-btn" 
             :class="{ active: selectedMode === 'campus' }" 
-            @click="selectedMode = 'campus'"
+            @click="selectMode('campus')"
           >
-            校园助手
+            🏫 校园助手
           </button>
           <button 
             class="mode-btn" 
             :class="{ active: selectedMode === 'learning' }" 
-            @click="selectedMode = 'learning'"
+            @click="selectMode('learning')"
           >
-            学习助手
+            📚 学习助手
           </button>
           <button 
             class="mode-btn" 
             type="button"
             title="自动检索知识库与网络资料，在对话中展示相关文件"
             :class="{ active: selectedMode === 'recommend' }" 
-            @click="selectedMode = 'recommend'"
+            @click="selectMode('recommend')"
           >
-            推荐模式
+            ✨ 推荐模式
           </button>
           <button
             class="mode-btn"
             :class="{ active: selectedMode === 'agent' }"
-            @click="selectedMode = 'agent'"
+            @click="selectMode('agent')"
           >
-            Agent模式
+            🤖 Agent模式
           </button>
           <button
             class="mode-btn"
             :class="{ active: selectedMode === 'files' }"
-            @click="selectedMode = 'files'"
+            @click="selectMode('files')"
           >
             🗂️ 文件管理
           </button>
@@ -579,9 +579,24 @@ const loading = ref(false)
 const chatContentRef = ref(null)
 const fileInput = ref(null)
 const selectedFiles = ref([])
-const selectedMode = ref('default') // 默认模式
+const CHAT_MODE_STORAGE_KEY = 'selectedChatMode'
+const DEFAULT_CHAT_MODE = 'default'
+const CHAT_MODE_VALUES = ['default', 'campus', 'learning', 'recommend', 'agent', 'files']
+
+function getSavedChatMode() {
+  const savedMode = localStorage.getItem(CHAT_MODE_STORAGE_KEY)
+  return CHAT_MODE_VALUES.includes(savedMode) ? savedMode : DEFAULT_CHAT_MODE
+}
+
+const selectedMode = ref(getSavedChatMode()) // 默认模式
 const loadingResources = ref(false)
 const committedSpeechTranscript = ref('')
+
+function selectMode(mode) {
+  if (!CHAT_MODE_VALUES.includes(mode)) return
+  selectedMode.value = mode
+  localStorage.setItem(CHAT_MODE_STORAGE_KEY, mode)
+}
 
 // 存储展开了网络资源的 message id
 const webExpandedIds = ref(new Set())
@@ -612,6 +627,51 @@ function getFileIcon(fileType) {
 // 解析Markdown文本
 function renderMarkdown(mdText) {
   return marked.parse(mdText)
+}
+
+function parseRecommendationPayload(message) {
+  const fromExtra = message?.extra?.recommendations
+  if (fromExtra && typeof fromExtra === 'object' && !Array.isArray(fromExtra)) {
+    return fromExtra
+  }
+
+  if (typeof message?.content !== 'string' || !message.content.trim()) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(message.content)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch (_) {
+    return null
+  }
+}
+
+function normalizeMessage(message) {
+  if (message?.content_type !== 'recommendation') {
+    return message
+  }
+
+  const payload = parseRecommendationPayload(message)
+  if (!payload) {
+    return message
+  }
+
+  return {
+    ...message,
+    mode: message.mode || payload.mode || 'recommend',
+    query_used: message.query_used || payload.query_used,
+    lecture: message.lecture || payload.lecture || [],
+    exercise: message.exercise || payload.exercise || [],
+    reference: message.reference || payload.reference || [],
+    other: message.other || payload.other || [],
+    course_resources: message.course_resources || payload.course_resources || {},
+    has_course_resources: message.has_course_resources || payload.has_course_resources || false,
+    course_name: message.course_name || payload.course_name,
+    web: message.web || payload.web || [],
+    session_links: message.session_links || payload.session_links || [],
+    extra: message.extra || { recommendations: payload }
+  }
 }
 
 function isSchedulerOnlySession(session) {
@@ -694,7 +754,7 @@ async function fetchSessionContent(sessionId) {
     if (response.ok) {
       const result = await response.json()
       console.log('获取会话内容返回：', result)
-      messages.value = result.data
+      messages.value = result.data.map(normalizeMessage)
       scrollToBottom()
     }
   } catch (error) {
@@ -840,7 +900,10 @@ async function sendMessage() {
       // 推荐模式：先获取资源卡片，再请求AI回复
       if (selectedMode.value === 'recommend') {
         console.log('推荐模式：先获取相关资源...')
-        await fetchRecommendResources(messageContent)
+        const recommendationData = await fetchRecommendResources(messageContent)
+        if (recommendationData) {
+          requestData.recommendation_data = recommendationData
+        }
       }
 
       // 添加一个空的AI消息占位符，用于实时更新内容
@@ -989,9 +1052,10 @@ async function fetchRecommendResources(queryText = '') {
     }
 
     // 将推荐结果作为一条AI消息添加到对话中
-    const recommendationMessage = {
+    const recommendationMessage = normalizeMessage({
       id: Date.now(),
       role: 'assistant',
+      content: '',
       content_type: 'recommendation',
       query_used: json.data.query_used,
       // 知识库分类数据
@@ -1007,7 +1071,7 @@ async function fetchRecommendResources(queryText = '') {
       web: json.data.web || [],
       session_links: json.data.session_links || [],
       created_at: new Date().toISOString()
-    }
+    })
 
     // 检查是否已存在相同的推荐消息（避免重复）
     const existingIndex = messages.value.findIndex(

@@ -1,7 +1,7 @@
 from sqlalchemy import desc
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, or_
 from models.session import Session, SessionContent
 from typing import List
 
@@ -48,6 +48,7 @@ async def get_last_n_content_by_session_id(db: AsyncSession, session_id: int, n:
     result = await db.execute(
         select(SessionContent)
         .where(SessionContent.session_id == session_id)
+        .where(or_(SessionContent.content_type != "recommendation", SessionContent.content_type.is_(None)))
         .order_by(desc(SessionContent.created_at))
         .limit(n)
     )

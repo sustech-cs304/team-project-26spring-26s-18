@@ -10,15 +10,40 @@ import json
 from pathlib import Path
 
 def count_lines_of_code(files):
-    """计算代码行数"""
+    """计算有效代码行数，排除空行和常见单行注释"""
     total_lines = 0
+
     for file_path in files:
         try:
+            suffix = Path(file_path).suffix
+
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
-                total_lines += len(lines)
-        except Exception:
-            pass
+                for line in f:
+                    stripped = line.strip()
+
+                    if not stripped:
+                        continue
+
+                    if suffix == '.py' and stripped.startswith('#'):
+                        continue
+
+                    if suffix in ['.js', '.vue'] and stripped.startswith('//'):
+                        continue
+
+                    if suffix in ['.js', '.vue'] and stripped.startswith('/*'):
+                        continue
+
+                    if suffix in ['.js', '.vue'] and stripped.startswith('*'):
+                        continue
+
+                    if suffix in ['.js', '.vue'] and stripped.startswith('*/'):
+                        continue
+
+                    total_lines += 1
+
+        except Exception as e:
+            print(f"  跳过文件 {file_path}: {e}")
+
     return total_lines
 
 def count_source_files(files):
@@ -26,44 +51,54 @@ def count_source_files(files):
     return len(files)
 
 def calculate_cyclomatic_complexity(python_files):
-    """计算圈复杂度（使用 radon 库）"""
+    """计算圈复杂度（使用 radon 库）
+
+    只统计：
+    1. 总圈复杂度
+    2. 平均每个函数/方法的圈复杂度
+    """
     try:
-        from radon.complexity import cc_visit, sorted_results
-        from radon.cli.harvest import CCHarvester
-        
+        from radon.complexity import cc_visit
+
         total_complexity = 0
-        file_count = 0
-        
+        function_count = 0
+        files_analyzed = 0
+
         for file_path in python_files:
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     source = f.read()
-                    result = cc_visit(source)
-                    if result:
-                        for obj in result:
-                            total_complexity += obj.complexity
-                        file_count += 1
+
+                result = cc_visit(source)
+                files_analyzed += 1
+
+                for obj in result:
+                    total_complexity += obj.complexity
+                    function_count += 1
+
             except Exception as e:
                 print(f"  跳过文件 {file_path}: {e}")
-        
-        if file_count > 0:
-            avg_complexity = total_complexity / file_count
+
+        if function_count > 0:
+            avg_complexity = total_complexity / function_count
         else:
             avg_complexity = 0
-        
+
         return {
             'total': total_complexity,
-            'average': round(avg_complexity, 2),
-            'files_analyzed': file_count
+            'average_per_function': round(avg_complexity, 2),
+            'functions_analyzed': function_count,
+            'files_analyzed': files_analyzed
         }
+
     except ImportError:
-        # 如果没有 radon，返回估算值
-        print("  警告: radon 库未安装，使用估算值")
+        print("  警告: radon 库未安装，无法计算精确圈复杂度")
         return {
-            'total': len(python_files) * 10,  # 估算每个文件平均10
-            'average': 10,
-            'files_analyzed': len(python_files),
-            'note': '估算值（安装 radon 库可获得精确值）'
+            'total': 0,
+            'average_per_function': 0,
+            'functions_analyzed': 0,
+            'files_analyzed': 0,
+            'note': '未安装 radon，请运行: pip install radon'
         }
 
 def count_dependencies(requirements_path, package_json_path):
@@ -94,7 +129,7 @@ def count_dependencies(requirements_path, package_json_path):
 
 def get_source_files(root_dir):
     """获取所有源文件（排除废弃文件）"""
-    exclude_dirs = ['scripts废案', 'file_helper已弃用', '__pycache__', '.git', 'node_modules', 'dist']
+    exclude_dirs = ['scripts废案', 'file_helper已弃用', '__pycache__', '.git', 'node_modules', 'dist', '.venv']
     exclude_patterns = ['*.pyc', '*.pyo', '.DS_Store']
     
     files = {
@@ -154,7 +189,7 @@ def main():
     print("\n[4/4] 计算圈复杂度...")
     complexity = calculate_cyclomatic_complexity(source_files['python'])
     print(f"  总圈复杂度: {complexity['total']}")
-    print(f"  平均圈复杂度: {complexity['average']}")
+    print(f"  平均圈复杂度: {complexity['average_per_function']}")
     print(f"  分析文件数: {complexity['files_analyzed']}")
     if 'note' in complexity:
         print(f"  备注: {complexity['note']}")
@@ -176,7 +211,7 @@ def main():
     print("=" * 60)
     print(f"  代码行数 (Lines of Code): {loc:,}")
     print(f"  源文件数量 (Source Files): {total_files}")
-    print(f"  圈复杂度 (Cyclomatic Complexity): {complexity['total']} (平均: {complexity['average']})")
+    print(f"  圈复杂度 (Cyclomatic Complexity): {complexity['total']} (平均: {complexity['average_per_function']})")
     print(f"  依赖项数量 (Dependencies): {deps['python'] + deps['npm'] + deps['npm_dev']}")
     print("=" * 60)
     
@@ -187,7 +222,7 @@ def main():
 |------|-----|
 | **代码行数** | {loc:,} |
 | **源文件数量** | {total_files} |
-| **圈复杂度** | {complexity['total']} (平均: {complexity['average']}) |
+| **圈复杂度** | {complexity['total']} (平均: {complexity['average_per_function']}) |
 | **依赖项数量** | {deps['python'] + deps['npm'] + deps['npm_dev']} |
 
 **详细说明：**

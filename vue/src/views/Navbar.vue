@@ -16,13 +16,14 @@
           @click="requireLogin">个人TODO</RouterLink>
       </div>
       <div class="navbar-right">
-        <RouterLink to="/user" class="navbar-user-info" style="text-decoration:none; color:inherit;"
+        <RouterLink v-if="userStore.isLoggedIn" to="/user" class="navbar-user-info" style="text-decoration:none; color:inherit;"
           @click="requireLogin">
           <img :src="userStore.userAvatarURL || defaultAvatar" alt="User Icon" class="navbar-user-icon" />
-          <span class="username">{{ userStore.userName || '用户名' }}</span>
+          <span class="username">{{ userStore.displayName }}</span>
           <span class="user-tooltip">点击进入用户中心</span>
         </RouterLink>
-        <RouterLink to="/login" class="nav-link">登录/注册</RouterLink>
+        <button v-if="userStore.isLoggedIn" type="button" class="nav-link logout-link" @click="logout">退出</button>
+        <RouterLink v-else to="/login" class="nav-link">登录/注册</RouterLink>
       </div>
     </nav>
   </div>
@@ -63,7 +64,16 @@ function requireLogin(e) {
   return true
 }
 
+function logout() {
+  userStore.clearUser()
+  showToast('已退出登录')
+  if (route.path !== '/login') {
+    router.push('/login')
+  }
+}
+
 onMounted(() => {
+  userStore.loadStoredAuth()
 })
 </script>
 
@@ -111,6 +121,13 @@ onMounted(() => {
 
 .nav-link:hover {
   font-weight: bold;
+}
+
+.logout-link {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
 }
 
 .navbar-right {
