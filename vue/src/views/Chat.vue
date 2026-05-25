@@ -897,9 +897,9 @@ async function sendMessage() {
     selectedFiles.value = []
 
     try {
-      // 推荐模式：先获取资源卡片，再请求AI回复
-      if (selectedMode.value === 'recommend') {
-        console.log('推荐模式：先获取相关资源...')
+      // 推荐模式和Agent模式：先获取资源卡片，再请求AI回复
+      if (selectedMode.value === 'recommend' || selectedMode.value === 'agent') {
+        console.log(`${selectedMode.value === 'recommend' ? '推荐模式' : 'Agent模式'}：先获取相关资源...`)
         const recommendationData = await fetchRecommendResources(messageContent)
         if (recommendationData) {
           requestData.recommendation_data = recommendationData
